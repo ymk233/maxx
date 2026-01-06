@@ -27,10 +27,17 @@ type ProviderConfigCustom struct {
 }
 
 type ProviderConfigAntigravity struct {
-	// 邮箱
+	// 邮箱（用于标识帐号）
 	Email string
-	// Refresh Token
+
+	// Google OAuth refresh_token
 	RefreshToken string
+
+	// Google Cloud Project ID
+	ProjectID string
+
+	// v1internal 端点
+	Endpoint string
 
 	// Model 映射: RequestModel → MappedModel
 	ModelMapping map[string]string

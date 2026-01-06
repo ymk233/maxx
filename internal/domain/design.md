@@ -144,7 +144,173 @@ type ProviderAdapter interface {
 }
 ```
 
-### 4. 全局注册
+### 4. Custom ProviderAdapter
+
+通用 HTTP 代理，支持任意兼容 API 的上游服务。
+
+职责：
+- 基于配置构建请求 URL（BaseURL + 端点路径）
+- 基于配置设置认证 Header（APIKey）
+- 透传请求体（已由 FormatConverter 转换）
+- 处理响应（流式/非流式）
+- 提取 ResponseModel
+
+```go
+type CustomProviderAdapter struct {
+    config *ProviderConfigCustom
+}
+
+func (a *CustomProviderAdapter) SupportedClientTypes() []ClientType {
+    return a.config.SupportedClientTypes
+}
+
+func (a *CustomProviderAdapter) Execute(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
+    // 1. 构建上游 URL
+    upstreamURL := a.config.BaseURL + req.URL.Path
+
+    // 2. 创建上游请求
+    upstreamReq, _ := http.NewRequestWithContext(ctx, req.Method, upstreamURL, req.Body)
+
+    // 3. 设置认证 Header
+    upstreamReq.Header.Set("Authorization", "Bearer "+a.config.APIKey)
+
+    // 4. 透传其他 Header
+    copyHeaders(req.Header, upstreamReq.Header)
+
+    // 5. 执行请求
+    resp, err := http.DefaultClient.Do(upstreamReq)
+    if err != nil {
+        return &ProxyError{Err: err, Retryable: true}
+    }
+
+    // 6. 检查状态码
+    if resp.StatusCode >= 400 {
+        return &ProxyError{Err: errors.New("upstream error"), Retryable: true}
+    }
+
+    // 7. 写入响应（一旦开始写入，不可重试）
+    w.WriteHeader(resp.StatusCode)
+    // ... 流式或非流式处理
+
+    // 8. 提取 ResponseModel 写入 ctx
+
+    return nil
+}
+```
+
+### 5. Antigravity ProviderAdapter
+
+Antigravity 是特殊的上游，使用 Google OAuth 认证，且上游格式是 **Gemini v1internal**（非标准 v1beta）。
+
+#### v1internal 与标准 Gemini 的差异
+
+| 特性 | 标准 Gemini v1beta | Gemini v1internal |
+|-----|-------------------|-------------------|
+| 外层结构 | 直接是请求体 | 包装在 `{project, requestId, request, model, userAgent, requestType}` |
+| 思维块标记 | 无 | `thought: true`, `thoughtSignature` |
+| 工具配置 | 标准 | `functionCallingConfig.mode: "VALIDATED"` |
+| 身份注入 | 无 | 需要 Identity Patch |
+
+由于差异较大，**Antigravity 内部自行处理格式转换**，不依赖 FormatConverter。
+
+#### 认证流程
+
+```
+1. 配置时存储 refresh_token
+2. 请求时检查 access_token 是否有效
+3. 过期则用 refresh_token 刷新
+4. 使用 access_token 发起请求
+```
+
+#### 结构设计
+
+```go
+type AntigravityProviderAdapter struct {
+    config       *ProviderConfigAntigravity
+    tokenManager *TokenManager  // 管理 OAuth token
+}
+
+// TokenManager 管理 Google OAuth token
+type TokenManager struct {
+    refreshToken string
+    accessToken  string
+    expiresAt    time.Time
+    mu           sync.Mutex
+}
+
+func (tm *TokenManager) GetAccessToken() (string, error) {
+    tm.mu.Lock()
+    defer tm.mu.Unlock()
+
+    if time.Now().Before(tm.expiresAt.Add(-5 * time.Minute)) {
+        return tm.accessToken, nil
+    }
+
+    // 刷新 token
+    return tm.refresh()
+}
+
+func (a *AntigravityProviderAdapter) SupportedClientTypes() []ClientType {
+    // Antigravity 支持所有格式（内部转换为 v1internal）
+    return []ClientType{Claude, OpenAI, Codex, Gemini}
+}
+
+func (a *AntigravityProviderAdapter) Execute(ctx context.Context, w http.ResponseWriter, req *http.Request) error {
+    clientType := GetClientType(ctx)
+    mappedModel := GetMappedModel(ctx)
+
+    // 1. 获取 access_token
+    accessToken, err := a.tokenManager.GetAccessToken()
+    if err != nil {
+        return &ProxyError{Err: err, Retryable: true}
+    }
+
+    // 2. 读取请求体
+    body, _ := io.ReadAll(req.Body)
+
+    // 3. 内部格式转换（任意格式 → v1internal）
+    v1internalBody, err := a.convertToV1Internal(clientType, body, mappedModel)
+    if err != nil {
+        return &ProxyError{Err: err, Retryable: false}
+    }
+
+    // 4. 构建上游请求
+    upstreamReq, _ := http.NewRequestWithContext(ctx, "POST", a.config.Endpoint, bytes.NewReader(v1internalBody))
+    upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
+    upstreamReq.Header.Set("Content-Type", "application/json")
+
+    // 5. 执行请求
+    resp, err := http.DefaultClient.Do(upstreamReq)
+    // ... 错误处理
+
+    // 6. 响应转换（v1internal → 客户端格式）
+    // 流式：逐块转换
+    // 非流式：整体转换
+
+    return nil
+}
+
+// 内部转换方法（不复用 FormatConverter）
+func (a *AntigravityProviderAdapter) convertToV1Internal(clientType ClientType, body []byte, model string) ([]byte, error) {
+    // 根据 clientType 解析请求
+    // 构建 v1internal 格式
+    // 注入 project, requestId, userAgent, requestType
+    // 处理 thinking 块、签名等特殊逻辑
+}
+```
+
+#### 配置结构
+
+```go
+type ProviderConfigAntigravity struct {
+    RefreshToken string            // Google OAuth refresh_token
+    ProjectID    string            // Google Cloud Project ID
+    Endpoint     string            // v1internal 端点
+    ModelMapping map[string]string // 模型映射
+}
+```
+
+### 6. 全局注册
 
 只到 ProviderType 级别：
 
@@ -155,7 +321,7 @@ var providerAdapters = map[ProviderType]NewProviderAdapterFunc{
 }
 ```
 
-### 5. 格式转换决策
+### 7. 格式转换决策
 
 ```go
 clientFormat := session.ClientType
