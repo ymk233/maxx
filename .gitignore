@@ -1,0 +1,7 @@
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Binary
+maxx
