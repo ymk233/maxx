@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfeat(设计): 完善 HTTP 代理服务器和 Adapter 设计\n\n- 更新 design.md: 完整记录核心流程、组件设计、失败重试、配置查找逻辑\n- 新增 RetryConfig: 可复用的重试配置，支持退避策略\n- 新增 RoutingStrategy: 可扩展的路由策略，支持全局和 Project 级别\n- Route 新增 RetryConfigID 和 ModelMapping\n- Provider 配置新增 ModelMapping\n- Model 三层设计: RequestModel → MappedModel → ResponseModel\nEOF\n)\")",
+      "Bash(git commit:*)",
+      "Bash(go mod init:*)",
+      "Bash(go build:*)",
+      "mcp__codex-as-mcp__spawn_agents_parallel",
+      "Bash(go mod tidy:*)",
+      "Bash(timeout 3:*)",
+      "Bash(cat:*)"
+    ]
+  }
+}
