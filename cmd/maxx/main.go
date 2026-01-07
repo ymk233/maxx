@@ -62,8 +62,11 @@ func main() {
 	// Create router
 	r := router.NewRouter(cachedRouteRepo, cachedProviderRepo, cachedRoutingStrategyRepo, cachedRetryConfigRepo)
 
+	// Create WebSocket hub
+	wsHub := handler.NewWebSocketHub()
+
 	// Create executor
-	exec := executor.NewExecutor(r, proxyRequestRepo, attemptRepo, cachedRetryConfigRepo)
+	exec := executor.NewExecutor(r, proxyRequestRepo, attemptRepo, cachedRetryConfigRepo, wsHub)
 
 	// Create client adapter
 	clientAdapter := client.NewAdapter()
@@ -100,9 +103,17 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
+	// WebSocket endpoint
+	mux.HandleFunc("/ws", wsHub.HandleWebSocket)
+
+	// Serve static files (Web UI) - must be last (default route)
+	staticHandler := handler.NewStaticHandler()
+	mux.Handle("/", staticHandler)
+
 	// Start server
 	log.Printf("Starting maxx-next server on %s", *addr)
 	log.Printf("Admin API: http://localhost%s/admin/", *addr)
+	log.Printf("WebSocket: ws://localhost%s/ws", *addr)
 	log.Printf("Proxy endpoints:")
 	log.Printf("  Claude: http://localhost%s/v1/messages", *addr)
 	log.Printf("  OpenAI: http://localhost%s/v1/chat/completions", *addr)

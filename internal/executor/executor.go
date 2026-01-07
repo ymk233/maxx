@@ -11,12 +11,18 @@ import (
 	"github.com/Bowl42/maxx-next/internal/router"
 )
 
+// WebSocketBroadcaster defines the interface for broadcasting WebSocket messages
+type WebSocketBroadcaster interface {
+	BroadcastProxyRequest(req *domain.ProxyRequest)
+}
+
 // Executor handles request execution with retry logic
 type Executor struct {
 	router           *router.Router
 	proxyRequestRepo repository.ProxyRequestRepository
 	attemptRepo      repository.ProxyUpstreamAttemptRepository
 	retryConfigRepo  repository.RetryConfigRepository
+	wsBroadcaster    WebSocketBroadcaster
 }
 
 // NewExecutor creates a new executor
@@ -25,12 +31,14 @@ func NewExecutor(
 	prr repository.ProxyRequestRepository,
 	ar repository.ProxyUpstreamAttemptRepository,
 	rcr repository.RetryConfigRepository,
+	wsb WebSocketBroadcaster,
 ) *Executor {
 	return &Executor{
 		router:           r,
 		proxyRequestRepo: prr,
 		attemptRepo:      ar,
 		retryConfigRepo:  rcr,
+		wsBroadcaster:    wsb,
 	}
 }
 
@@ -98,6 +106,12 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 				proxyReq.Duration = proxyReq.EndTime.Sub(proxyReq.StartTime)
 				proxyReq.FinalProxyUpstreamAttemptID = attemptRecord.ID
 				_ = e.proxyRequestRepo.Update(proxyReq)
+
+				// Broadcast to WebSocket clients
+				if e.wsBroadcaster != nil {
+					e.wsBroadcaster.BroadcastProxyRequest(proxyReq)
+				}
+
 				return nil
 			}
 
@@ -133,6 +147,11 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 		proxyReq.Error = lastErr.Error()
 	}
 	_ = e.proxyRequestRepo.Update(proxyReq)
+
+	// Broadcast to WebSocket clients
+	if e.wsBroadcaster != nil {
+		e.wsBroadcaster.BroadcastProxyRequest(proxyReq)
+	}
 
 	if lastErr != nil {
 		return lastErr

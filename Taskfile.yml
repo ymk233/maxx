@@ -2,6 +2,30 @@ version: '3'
 
 tasks:
   dev:
-    desc: Run development server
+    desc: Run backend development server
     cmds:
       - go run cmd/maxx/main.go
+
+  web-dev:
+    desc: Run frontend development server
+    dir: web
+    cmds:
+      - npm run dev
+
+  web-install:
+    desc: Install frontend dependencies
+    dir: web
+    cmds:
+      - npm install
+
+  web-build:
+    desc: Build frontend
+    dir: web
+    cmds:
+      - npm run build
+
+  build:
+    desc: Build complete application (frontend + backend)
+    deps: [web-build]
+    cmds:
+      - go build -o maxx cmd/maxx/main.go
