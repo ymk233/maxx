@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Bowl42/maxx-next/internal/adapter"
+	"github.com/Bowl42/maxx-next/internal/adapter/provider"
 	"github.com/Bowl42/maxx-next/internal/domain"
 	"github.com/Bowl42/maxx-next/internal/repository/cached"
 )
@@ -14,7 +14,7 @@ import (
 type MatchedRoute struct {
 	Route           *domain.Route
 	Provider        *domain.Provider
-	ProviderAdapter adapter.ProviderAdapter
+	ProviderAdapter provider.ProviderAdapter
 	RetryConfig     *domain.RetryConfig
 }
 
@@ -26,7 +26,7 @@ type Router struct {
 	retryConfigRepo     *cached.RetryConfigRepository
 
 	// Adapter cache
-	adapters map[uint64]adapter.ProviderAdapter
+	adapters map[uint64]provider.ProviderAdapter
 	mu       sync.RWMutex
 }
 
@@ -42,7 +42,7 @@ func NewRouter(
 		providerRepo:        providerRepo,
 		routingStrategyRepo: routingStrategyRepo,
 		retryConfigRepo:     retryConfigRepo,
-		adapters:            make(map[uint64]adapter.ProviderAdapter),
+		adapters:            make(map[uint64]provider.ProviderAdapter),
 	}
 }
 
@@ -52,32 +52,32 @@ func (r *Router) InitAdapters() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for _, provider := range providers {
-		factory, ok := adapter.GetAdapterFactory(provider.Type)
+	for _, p := range providers {
+		factory, ok := provider.GetAdapterFactory(p.Type)
 		if !ok {
 			continue // Skip providers without registered adapters
 		}
-		a, err := factory(provider)
+		a, err := factory(p)
 		if err != nil {
 			return err
 		}
-		r.adapters[provider.ID] = a
+		r.adapters[p.ID] = a
 	}
 	return nil
 }
 
 // RefreshAdapter refreshes the adapter for a specific provider
-func (r *Router) RefreshAdapter(provider *domain.Provider) error {
-	factory, ok := adapter.GetAdapterFactory(provider.Type)
+func (r *Router) RefreshAdapter(p *domain.Provider) error {
+	factory, ok := provider.GetAdapterFactory(p.Type)
 	if !ok {
 		return nil
 	}
-	a, err := factory(provider)
+	a, err := factory(p)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.adapters[provider.ID] = a
+	r.adapters[p.ID] = a
 	r.mu.Unlock()
 	return nil
 }

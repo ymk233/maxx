@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Bowl42/maxx-next/internal/adapter"
+	"github.com/Bowl42/maxx-next/internal/adapter/provider"
 	"github.com/Bowl42/maxx-next/internal/converter"
 	ctxutil "github.com/Bowl42/maxx-next/internal/context"
 	"github.com/Bowl42/maxx-next/internal/domain"
 )
 
 func init() {
-	adapter.RegisterAdapterFactory("custom", NewAdapter)
+	provider.RegisterAdapterFactory("custom", NewAdapter)
 }
 
 type CustomAdapter struct {
@@ -25,12 +25,12 @@ type CustomAdapter struct {
 	converter *converter.Registry
 }
 
-func NewAdapter(provider *domain.Provider) (adapter.ProviderAdapter, error) {
-	if provider.Config == nil || provider.Config.Custom == nil {
-		return nil, fmt.Errorf("provider %s missing custom config", provider.Name)
+func NewAdapter(p *domain.Provider) (provider.ProviderAdapter, error) {
+	if p.Config == nil || p.Config.Custom == nil {
+		return nil, fmt.Errorf("provider %s missing custom config", p.Name)
 	}
 	return &CustomAdapter{
-		provider:  provider,
+		provider:  p,
 		converter: converter.NewRegistry(),
 	}, nil
 }

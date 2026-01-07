@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Bowl42/maxx-next/internal/adapter"
+	"github.com/Bowl42/maxx-next/internal/adapter/provider"
 	"github.com/Bowl42/maxx-next/internal/converter"
 	ctxutil "github.com/Bowl42/maxx-next/internal/context"
 	"github.com/Bowl42/maxx-next/internal/domain"
 )
 
 func init() {
-	adapter.RegisterAdapterFactory("antigravity", NewAdapter)
+	provider.RegisterAdapterFactory("antigravity", NewAdapter)
 }
 
 // TokenCache caches access tokens
@@ -36,12 +36,12 @@ type AntigravityAdapter struct {
 	tokenMu    sync.RWMutex
 }
 
-func NewAdapter(provider *domain.Provider) (adapter.ProviderAdapter, error) {
-	if provider.Config == nil || provider.Config.Antigravity == nil {
-		return nil, fmt.Errorf("provider %s missing antigravity config", provider.Name)
+func NewAdapter(p *domain.Provider) (provider.ProviderAdapter, error) {
+	if p.Config == nil || p.Config.Antigravity == nil {
+		return nil, fmt.Errorf("provider %s missing antigravity config", p.Name)
 	}
 	return &AntigravityAdapter{
-		provider:   provider,
+		provider:   p,
 		converter:  converter.NewRegistry(),
 		tokenCache: &TokenCache{},
 	}, nil

@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/Bowl42/maxx-next/internal/adapter/client"
-	_ "github.com/Bowl42/maxx-next/internal/adapter/antigravity" // Register antigravity adapter
-	_ "github.com/Bowl42/maxx-next/internal/adapter/custom"      // Register custom adapter
+	_ "github.com/Bowl42/maxx-next/internal/adapter/provider/antigravity" // Register antigravity adapter
+	_ "github.com/Bowl42/maxx-next/internal/adapter/provider/custom"      // Register custom adapter
 	"github.com/Bowl42/maxx-next/internal/executor"
 	"github.com/Bowl42/maxx-next/internal/handler"
 	"github.com/Bowl42/maxx-next/internal/repository/cached"

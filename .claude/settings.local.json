@@ -11,7 +11,8 @@
       "mcp__codex-as-mcp__spawn_agents_parallel",
       "Bash(go mod tidy:*)",
       "Bash(timeout 3:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(git mv:*)"
     ]
   }
 }
