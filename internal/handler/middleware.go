@@ -38,8 +38,8 @@ func (rw *responseWriter) Flush() {
 // LoggingMiddleware logs all HTTP requests
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip logging for WebSocket and static assets
-		if r.URL.Path == "/ws" || strings.HasPrefix(r.URL.Path, "/assets/") {
+		// Skip logging for WebSocket, health check, and static assets
+		if r.URL.Path == "/ws" || r.URL.Path == "/health" || strings.HasPrefix(r.URL.Path, "/assets/") {
 			next.ServeHTTP(w, r)
 			return
 		}
