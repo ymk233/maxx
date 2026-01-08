@@ -9,6 +9,7 @@ import {
   Loader2,
   CheckCircle,
   AlertTriangle,
+  Ban,
 } from 'lucide-react';
 import type { ProxyRequest, ProxyRequestStatus } from '@/lib/transport';
 import { ClientIcon } from '@/components/icons/client-icons';
@@ -20,6 +21,7 @@ export const statusVariant: Record<ProxyRequestStatus, 'default' | 'success' | '
   IN_PROGRESS: 'info',
   COMPLETED: 'success',
   FAILED: 'danger',
+  CANCELLED: 'warning',
 };
 
 export function RequestsPage() {
@@ -166,6 +168,13 @@ function RequestStatusBadge({ status }: { status: ProxyRequestStatus }) {
           bgColor: 'bg-rose-600 border border-rose-500 font-extrabold shadow-sm',
           label: 'Failed',
           icon: <AlertTriangle size={11} className="mr-1 stroke-[2.5px]" />,
+        };
+      case 'CANCELLED':
+        return {
+          color: 'text-yellow-400',
+          bgColor: 'bg-yellow-400/10 border border-yellow-400/20',
+          label: 'Cancelled',
+          icon: <Ban size={10} className="mr-1" />,
         };
     }
   };

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui';
 import { useProxyRequest, useProxyUpstreamAttempts, useProxyRequestUpdates } from '@/hooks/queries';
-import { ArrowLeft, Clock, Zap, AlertCircle, Server, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Clock, Zap, AlertCircle, Server, CheckCircle, XCircle, Loader2, Ban } from 'lucide-react';
 import { statusVariant } from './index';
 import type { ProxyUpstreamAttempt } from '@/lib/transport';
 
@@ -44,6 +44,8 @@ export function RequestDetailPage() {
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'FAILED':
         return <XCircle className="h-4 w-4 text-red-500" />;
+      case 'CANCELLED':
+        return <Ban className="h-4 w-4 text-yellow-500" />;
       case 'IN_PROGRESS':
         return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />;
       default:

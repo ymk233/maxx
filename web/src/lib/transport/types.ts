@@ -131,7 +131,7 @@ export interface ResponseInfo {
   body: string;
 }
 
-export type ProxyRequestStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+export type ProxyRequestStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 export interface ProxyRequest {
   id: number;
@@ -161,7 +161,7 @@ export interface ProxyRequest {
 
 // ===== ProxyUpstreamAttempt =====
 
-export type ProxyUpstreamAttemptStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+export type ProxyUpstreamAttemptStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 export interface ProxyUpstreamAttempt {
   id: number;

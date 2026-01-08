@@ -218,33 +218,66 @@ func (a *CustomAdapter) handleStreamResponse(ctx context.Context, w http.Respons
 		state = converter.NewTransformState()
 	}
 
+	// Create a channel for read results
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	readCh := make(chan readResult, 1)
+
 	reader := bufio.NewReader(resp.Body)
 	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil // Connection closed
+		// Check context before reading
+		select {
+		case <-ctx.Done():
+			return domain.NewProxyErrorWithMessage(ctx.Err(), false, "client disconnected")
+		default:
 		}
 
-		if needsConversion {
-			// Transform the chunk
-			transformed, err := a.converter.TransformStreamChunk(targetType, clientType, line, state)
-			if err != nil {
-				continue // Skip malformed chunks
+		// Read in goroutine to allow context checking
+		go func() {
+			line, err := reader.ReadBytes('\n')
+			readCh <- readResult{line: line, err: err}
+		}()
+
+		// Wait for read or context cancellation
+		select {
+		case <-ctx.Done():
+			return domain.NewProxyErrorWithMessage(ctx.Err(), false, "client disconnected")
+		case result := <-readCh:
+			if result.err != nil {
+				if result.err == io.EOF {
+					return nil // Normal completion
+				}
+				// Upstream connection closed - check if client is still connected
+				if ctx.Err() != nil {
+					return domain.NewProxyErrorWithMessage(ctx.Err(), false, "client disconnected")
+				}
+				return nil // Upstream closed normally
 			}
-			if len(transformed) > 0 {
-				_, _ = w.Write(transformed)
+
+			var output []byte
+			if needsConversion {
+				// Transform the chunk
+				transformed, err := a.converter.TransformStreamChunk(targetType, clientType, result.line, state)
+				if err != nil {
+					continue // Skip malformed chunks
+				}
+				output = transformed
+			} else {
+				output = result.line
+			}
+
+			if len(output) > 0 {
+				_, writeErr := w.Write(output)
+				if writeErr != nil {
+					// Client disconnected
+					return domain.NewProxyErrorWithMessage(writeErr, false, "client disconnected")
+				}
 				flusher.Flush()
 			}
-		} else {
-			_, _ = w.Write(line)
-			flusher.Flush()
 		}
 	}
-
-	return nil
 }
 
 // Helper functions

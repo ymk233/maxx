@@ -84,9 +84,49 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 		e.broadcaster.BroadcastProxyRequest(proxyReq)
 	}
 
+	// Track current attempt for cleanup
+	var currentAttempt *domain.ProxyUpstreamAttempt
+
+	// Ensure final state is always updated
+	defer func() {
+		// If still IN_PROGRESS, mark as cancelled/failed
+		if proxyReq.Status == "IN_PROGRESS" {
+			proxyReq.EndTime = time.Now()
+			proxyReq.Duration = proxyReq.EndTime.Sub(proxyReq.StartTime)
+			if ctx.Err() != nil {
+				proxyReq.Status = "CANCELLED"
+				proxyReq.Error = "client disconnected"
+			} else {
+				proxyReq.Status = "FAILED"
+			}
+			_ = e.proxyRequestRepo.Update(proxyReq)
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastProxyRequest(proxyReq)
+			}
+		}
+
+		// If current attempt is still IN_PROGRESS, mark as cancelled/failed
+		if currentAttempt != nil && currentAttempt.Status == "IN_PROGRESS" {
+			if ctx.Err() != nil {
+				currentAttempt.Status = "CANCELLED"
+			} else {
+				currentAttempt.Status = "FAILED"
+			}
+			_ = e.attemptRepo.Update(currentAttempt)
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastProxyUpstreamAttempt(currentAttempt)
+			}
+		}
+	}()
+
 	// Try routes in order with retry logic
 	var lastErr error
 	for _, matchedRoute := range routes {
+		// Check context before starting new route
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		// Determine model mapping
 		mappedModel := e.mapModel(requestModel, matchedRoute.Route, matchedRoute.Provider)
 		ctx = ctxutil.WithMappedModel(ctx, mappedModel)
@@ -96,6 +136,11 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 
 		// Execute with retries
 		for attempt := 0; attempt <= retryConfig.MaxRetries; attempt++ {
+			// Check context before each attempt
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
 			// Create attempt record
 			attemptRecord := &domain.ProxyUpstreamAttempt{
 				ProxyRequestID: proxyReq.ID,
@@ -106,6 +151,7 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 			if err := e.attemptRepo.Create(attemptRecord); err != nil {
 				// Log but continue
 			}
+			currentAttempt = attemptRecord
 
 			// Broadcast new attempt immediately
 			if e.broadcaster != nil {
@@ -124,6 +170,8 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 				if e.broadcaster != nil {
 					e.broadcaster.BroadcastProxyUpstreamAttempt(attemptRecord)
 				}
+				currentAttempt = nil // Clear so defer doesn't update
+
 				proxyReq.Status = "COMPLETED"
 				proxyReq.EndTime = time.Now()
 				proxyReq.Duration = proxyReq.EndTime.Sub(proxyReq.StartTime)
@@ -140,11 +188,18 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 
 			// Handle error
 			lastErr = err
+
+			// Check if it's a context cancellation (client disconnect)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
 			attemptRecord.Status = "FAILED"
 			_ = e.attemptRepo.Update(attemptRecord)
 			if e.broadcaster != nil {
 				e.broadcaster.BroadcastProxyUpstreamAttempt(attemptRecord)
 			}
+			currentAttempt = nil // Clear so defer doesn't double update
 			proxyReq.ProxyUpstreamAttemptCount++
 
 			// Check if retryable
