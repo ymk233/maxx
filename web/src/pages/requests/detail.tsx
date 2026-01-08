@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, CardContent, CardHeader, CardTitle, Badge } from '@/components/ui';
 import { useProxyRequest, useProxyUpstreamAttempts, useProxyRequestUpdates } from '@/hooks/queries';
@@ -10,9 +11,13 @@ export function RequestDetailPage() {
   const navigate = useNavigate();
   const { data: request, isLoading, error } = useProxyRequest(Number(id));
   const { data: attempts } = useProxyUpstreamAttempts(Number(id));
+  const [selectedAttemptId, setSelectedAttemptId] = useState<number | null>(null);
 
   // Subscribe to real-time updates
   useProxyRequestUpdates();
+
+  // 获取选中的 attempt
+  const selectedAttempt = attempts?.find(a => a.id === selectedAttemptId) ?? attempts?.[0];
 
   const formatDuration = (ns: number) => {
     const ms = ns / 1_000_000;
@@ -189,7 +194,7 @@ export function RequestDetailPage() {
         </Card>
       )}
 
-      {/* Upstream Attempts */}
+      {/* Upstream Attempts - 左右布局 */}
       {attempts && attempts.length > 0 && (
         <Card>
           <CardHeader>
@@ -199,77 +204,121 @@ export function RequestDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {attempts.map((attempt: ProxyUpstreamAttempt, index: number) => (
-                <div
-                  key={attempt.id}
-                  className="rounded-lg border p-4"
-                >
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-sm font-medium dark:bg-gray-800">
+            <div className="flex gap-4">
+              {/* 左侧：Attempts 列表 */}
+              <div className="w-64 shrink-0 space-y-2">
+                {attempts.map((attempt: ProxyUpstreamAttempt, index: number) => (
+                  <div
+                    key={attempt.id}
+                    onClick={() => setSelectedAttemptId(attempt.id)}
+                    className={`cursor-pointer rounded-lg border p-3 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                      (selectedAttempt?.id === attempt.id) ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-sm font-medium dark:bg-gray-700">
                         {index + 1}
                       </span>
                       <Badge variant={statusVariant[attempt.status as keyof typeof statusVariant] || 'secondary'}>
                         {attempt.status}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <Server className="h-4 w-4" />
-                        Route #{attempt.routeID} / Provider #{attempt.providerID}
-                      </span>
+                    <div className="mt-2 flex items-center gap-1 text-xs text-gray-500">
+                      <Server className="h-3 w-3" />
+                      Route #{attempt.routeID} / Provider #{attempt.providerID}
                     </div>
+                    {/* Token Stats */}
+                    {(attempt.inputTokenCount > 0 || attempt.outputTokenCount > 0) && (
+                      <div className="mt-1 text-xs text-gray-400">
+                        {attempt.inputTokenCount} / {attempt.outputTokenCount} tokens
+                      </div>
+                    )}
                   </div>
+                ))}
+              </div>
 
-                  {/* Token Stats */}
-                  {(attempt.inputTokenCount > 0 || attempt.outputTokenCount > 0) && (
-                    <div className="mb-3 flex gap-4 text-sm text-gray-500">
-                      <span>Input: {attempt.inputTokenCount}</span>
-                      <span>Output: {attempt.outputTokenCount}</span>
-                      {attempt.cacheReadCount > 0 && <span>Cache Read: {attempt.cacheReadCount}</span>}
-                      {attempt.cacheWriteCount > 0 && <span>Cache Write: {attempt.cacheWriteCount}</span>}
-                    </div>
-                  )}
-
-                  {/* Request Info */}
-                  {attempt.requestInfo && (
-                    <details className="mb-2">
-                      <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100">
-                        Request Details
-                      </summary>
-                      <div className="mt-2 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="info">{attempt.requestInfo.method}</Badge>
-                          <code className="truncate rounded bg-gray-100 px-2 py-1 font-mono text-xs dark:bg-gray-800">
-                            {attempt.requestInfo.url}
+              {/* 右侧：选中 Attempt 的详情 */}
+              <div className="min-w-0 flex-1 space-y-4">
+                {selectedAttempt ? (
+                  <>
+                    {/* Request Info */}
+                    {selectedAttempt.requestInfo && (
+                      <div className="rounded-lg border p-4">
+                        <h4 className="mb-3 font-medium">Request</h4>
+                        <div className="mb-3 flex items-center gap-2">
+                          <Badge variant="info">{selectedAttempt.requestInfo.method}</Badge>
+                          <code className="flex-1 truncate rounded bg-gray-100 px-2 py-1 font-mono text-xs dark:bg-gray-800">
+                            {selectedAttempt.requestInfo.url}
                           </code>
                         </div>
-                        <pre className="max-h-32 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
-                          {formatJSON(attempt.requestInfo.headers)}
-                        </pre>
+                        <div className="mb-2">
+                          <h5 className="mb-1 text-sm text-gray-500">Headers</h5>
+                          <pre className="max-h-32 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
+                            {formatJSON(selectedAttempt.requestInfo.headers)}
+                          </pre>
+                        </div>
+                        {selectedAttempt.requestInfo.body && (
+                          <div>
+                            <h5 className="mb-1 text-sm text-gray-500">Body</h5>
+                            <pre className="max-h-48 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
+                              {(() => {
+                                try {
+                                  return formatJSON(JSON.parse(selectedAttempt.requestInfo.body));
+                                } catch {
+                                  return selectedAttempt.requestInfo.body;
+                                }
+                              })()}
+                            </pre>
+                          </div>
+                        )}
                       </div>
-                    </details>
-                  )}
+                    )}
 
-                  {/* Response Info */}
-                  {attempt.responseInfo && (
-                    <details>
-                      <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100">
-                        Response Details
-                      </summary>
-                      <div className="mt-2 space-y-2">
-                        <Badge variant={attempt.responseInfo.status >= 400 ? 'danger' : 'success'}>
-                          {attempt.responseInfo.status}
-                        </Badge>
-                        <pre className="max-h-32 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
-                          {formatJSON(attempt.responseInfo.headers)}
-                        </pre>
+                    {/* Response Info */}
+                    {selectedAttempt.responseInfo && (
+                      <div className="rounded-lg border p-4">
+                        <h4 className="mb-3 font-medium">Response</h4>
+                        <div className="mb-3">
+                          <Badge variant={selectedAttempt.responseInfo.status >= 400 ? 'danger' : 'success'}>
+                            {selectedAttempt.responseInfo.status}
+                          </Badge>
+                        </div>
+                        <div className="mb-2">
+                          <h5 className="mb-1 text-sm text-gray-500">Headers</h5>
+                          <pre className="max-h-32 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
+                            {formatJSON(selectedAttempt.responseInfo.headers)}
+                          </pre>
+                        </div>
+                        {selectedAttempt.responseInfo.body && (
+                          <div>
+                            <h5 className="mb-1 text-sm text-gray-500">Body</h5>
+                            <pre className="max-h-48 overflow-auto rounded bg-gray-100 p-2 font-mono text-xs dark:bg-gray-800">
+                              {(() => {
+                                try {
+                                  return formatJSON(JSON.parse(selectedAttempt.responseInfo.body));
+                                } catch {
+                                  return selectedAttempt.responseInfo.body;
+                                }
+                              })()}
+                            </pre>
+                          </div>
+                        )}
                       </div>
-                    </details>
-                  )}
-                </div>
-              ))}
+                    )}
+
+                    {/* 没有请求/响应信息 */}
+                    {!selectedAttempt.requestInfo && !selectedAttempt.responseInfo && (
+                      <div className="flex items-center justify-center rounded-lg border border-dashed p-12 text-gray-400">
+                        No request/response data available
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center rounded-lg border border-dashed p-12 text-gray-400">
+                    Select an attempt to view details
+                  </div>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
