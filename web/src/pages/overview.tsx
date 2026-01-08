@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 import { useProviders, useRoutes, useProjects, useProxyRequests } from '@/hooks/queries';
-import { Activity, Server, Route, FolderKanban, Zap, ArrowRight, CheckCircle, XCircle, LayoutDashboard } from 'lucide-react';
+import { Activity, Server, Route, FolderKanban, Zap, ArrowRight, CheckCircle, XCircle, Ban, LayoutDashboard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function OverviewPage() {
@@ -18,6 +18,7 @@ export function OverviewPage() {
 
   const completedRequests = requests?.filter((r) => r.status === 'COMPLETED').length ?? 0;
   const failedRequests = requests?.filter((r) => r.status === 'FAILED').length ?? 0;
+  const cancelledRequests = requests?.filter((r) => r.status === 'CANCELLED').length ?? 0;
   const hasProviders = (providers?.length ?? 0) > 0;
 
   return (
@@ -101,6 +102,13 @@ export function OverviewPage() {
                   <span className="text-body text-text-secondary">Failed</span>
                 </div>
                 <span className="text-headline font-semibold text-error">{failedRequests}</span>
+              </div>
+              <div className="flex items-center justify-between p-md rounded-lg bg-surface-secondary">
+                <div className="flex items-center gap-md">
+                  <Ban className="h-5 w-5 text-warning" />
+                  <span className="text-body text-text-secondary">Cancelled</span>
+                </div>
+                <span className="text-headline font-semibold text-warning">{cancelledRequests}</span>
               </div>
             </div>
           </CardContent>

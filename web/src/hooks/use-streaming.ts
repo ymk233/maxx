@@ -33,8 +33,8 @@ export function useStreamingRequests(): StreamingState {
     setActiveRequests((prev) => {
       const next = new Map(prev);
 
-      // 已完成或失败的请求从活动列表中移除
-      if (request.status === 'COMPLETED' || request.status === 'FAILED') {
+      // 已完成、失败或取消的请求从活动列表中移除
+      if (request.status === 'COMPLETED' || request.status === 'FAILED' || request.status === 'CANCELLED') {
         next.delete(request.requestID);
       } else {
         // PENDING 或 IN_PROGRESS 的请求添加到活动列表
