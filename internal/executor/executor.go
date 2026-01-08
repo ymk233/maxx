@@ -8,14 +8,10 @@ import (
 
 	ctxutil "github.com/Bowl42/maxx-next/internal/context"
 	"github.com/Bowl42/maxx-next/internal/domain"
+	"github.com/Bowl42/maxx-next/internal/event"
 	"github.com/Bowl42/maxx-next/internal/repository"
 	"github.com/Bowl42/maxx-next/internal/router"
 )
-
-// WebSocketBroadcaster defines the interface for broadcasting WebSocket messages
-type WebSocketBroadcaster interface {
-	BroadcastProxyRequest(req *domain.ProxyRequest)
-}
 
 // Executor handles request execution with retry logic
 type Executor struct {
@@ -23,7 +19,8 @@ type Executor struct {
 	proxyRequestRepo repository.ProxyRequestRepository
 	attemptRepo      repository.ProxyUpstreamAttemptRepository
 	retryConfigRepo  repository.RetryConfigRepository
-	wsBroadcaster    WebSocketBroadcaster
+	broadcaster      event.Broadcaster
+	instanceID       string
 }
 
 // NewExecutor creates a new executor
@@ -32,14 +29,16 @@ func NewExecutor(
 	prr repository.ProxyRequestRepository,
 	ar repository.ProxyUpstreamAttemptRepository,
 	rcr repository.RetryConfigRepository,
-	wsb WebSocketBroadcaster,
+	bc event.Broadcaster,
+	instanceID string,
 ) *Executor {
 	return &Executor{
 		router:           r,
 		proxyRequestRepo: prr,
 		attemptRepo:      ar,
 		retryConfigRepo:  rcr,
-		wsBroadcaster:    wsb,
+		broadcaster:      bc,
+		instanceID:       instanceID,
 	}
 }
 
@@ -67,6 +66,7 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 
 	// Create proxy request record
 	proxyReq := &domain.ProxyRequest{
+		InstanceID:   e.instanceID,
 		RequestID:    generateRequestID(),
 		SessionID:    ctxutil.GetSessionID(ctx),
 		ClientType:   clientType,
@@ -78,6 +78,11 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 		// Log but continue
 	}
 	ctx = ctxutil.WithProxyRequest(ctx, proxyReq)
+
+	// Broadcast new request immediately so frontend sees it
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastProxyRequest(proxyReq)
+	}
 
 	// Try routes in order with retry logic
 	var lastErr error
@@ -102,12 +107,20 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 				// Log but continue
 			}
 
+			// Broadcast new attempt immediately
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastProxyUpstreamAttempt(attemptRecord)
+			}
+
 			// Execute request
 			err := matchedRoute.ProviderAdapter.Execute(ctx, w, req, matchedRoute.Provider)
 			if err == nil {
 				// Success
 				attemptRecord.Status = "COMPLETED"
 				_ = e.attemptRepo.Update(attemptRecord)
+				if e.broadcaster != nil {
+					e.broadcaster.BroadcastProxyUpstreamAttempt(attemptRecord)
+				}
 				proxyReq.Status = "COMPLETED"
 				proxyReq.EndTime = time.Now()
 				proxyReq.Duration = proxyReq.EndTime.Sub(proxyReq.StartTime)
@@ -115,8 +128,8 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 				_ = e.proxyRequestRepo.Update(proxyReq)
 
 				// Broadcast to WebSocket clients
-				if e.wsBroadcaster != nil {
-					e.wsBroadcaster.BroadcastProxyRequest(proxyReq)
+				if e.broadcaster != nil {
+					e.broadcaster.BroadcastProxyRequest(proxyReq)
 				}
 
 				return nil
@@ -126,6 +139,9 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 			lastErr = err
 			attemptRecord.Status = "FAILED"
 			_ = e.attemptRepo.Update(attemptRecord)
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastProxyUpstreamAttempt(attemptRecord)
+			}
 			proxyReq.ProxyUpstreamAttemptCount++
 
 			// Check if retryable
@@ -156,8 +172,8 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 	_ = e.proxyRequestRepo.Update(proxyReq)
 
 	// Broadcast to WebSocket clients
-	if e.wsBroadcaster != nil {
-		e.wsBroadcaster.BroadcastProxyRequest(proxyReq)
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastProxyRequest(proxyReq)
 	}
 
 	if lastErr != nil {

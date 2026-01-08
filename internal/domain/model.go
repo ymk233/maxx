@@ -133,6 +133,9 @@ type ProxyRequest struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 
+	// 服务实例 ID，用于识别请求属于哪个实例
+	InstanceID string `json:"instanceID"`
+
 	RequestID  string     `json:"requestID"`
 	SessionID  string     `json:"sessionID"`
 	ClientType ClientType `json:"clientType"`

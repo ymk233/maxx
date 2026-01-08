@@ -2,10 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Bowl42/maxx-next/internal/adapter/client"
 	_ "github.com/Bowl42/maxx-next/internal/adapter/provider/antigravity" // Register antigravity adapter
@@ -15,6 +17,7 @@ import (
 	"github.com/Bowl42/maxx-next/internal/repository/cached"
 	"github.com/Bowl42/maxx-next/internal/repository/sqlite"
 	"github.com/Bowl42/maxx-next/internal/router"
+	"github.com/Bowl42/maxx-next/internal/service"
 )
 
 // getDefaultDBPath returns the default database path (~/.config/maxx/maxx.db)
@@ -25,6 +28,12 @@ func getDefaultDBPath() string {
 		return "maxx.db"
 	}
 	return filepath.Join(homeDir, ".config", "maxx", "maxx.db")
+}
+
+// generateInstanceID generates a unique instance ID for this server run
+func generateInstanceID() string {
+	hostname, _ := os.Hostname()
+	return fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
 }
 
 func main() {
@@ -58,6 +67,14 @@ func main() {
 	proxyRequestRepo := sqlite.NewProxyRequestRepository(db)
 	attemptRepo := sqlite.NewProxyUpstreamAttemptRepository(db)
 	settingRepo := sqlite.NewSystemSettingRepository(db)
+
+	// Generate instance ID and mark stale requests as failed
+	instanceID := generateInstanceID()
+	if count, err := proxyRequestRepo.MarkStaleAsFailed(instanceID); err != nil {
+		log.Printf("Warning: Failed to mark stale requests: %v", err)
+	} else if count > 0 {
+		log.Printf("Marked %d stale requests as failed", count)
+	}
 
 	// Create cached repositories
 	cachedProviderRepo := cached.NewProviderRepository(providerRepo)
@@ -96,14 +113,13 @@ func main() {
 	log.SetOutput(logWriter)
 
 	// Create executor
-	exec := executor.NewExecutor(r, proxyRequestRepo, attemptRepo, cachedRetryConfigRepo, wsHub)
+	exec := executor.NewExecutor(r, proxyRequestRepo, attemptRepo, cachedRetryConfigRepo, wsHub, instanceID)
 
 	// Create client adapter
 	clientAdapter := client.NewAdapter()
 
-	// Create handlers
-	proxyHandler := handler.NewProxyHandler(clientAdapter, exec, cachedSessionRepo)
-	adminHandler := handler.NewAdminHandler(
+	// Create admin service
+	adminService := service.NewAdminService(
 		cachedProviderRepo,
 		cachedRouteRepo,
 		projectRepo,
@@ -114,6 +130,10 @@ func main() {
 		settingRepo,
 		*addr,
 	)
+
+	// Create handlers
+	proxyHandler := handler.NewProxyHandler(clientAdapter, exec, cachedSessionRepo)
+	adminHandler := handler.NewAdminHandler(adminService)
 
 	// Setup routes
 	mux := http.NewServeMux()

@@ -101,6 +101,7 @@ func (d *DB) migrate() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		instance_id TEXT,
 		request_id TEXT,
 		session_id TEXT,
 		client_type TEXT,
@@ -152,7 +153,14 @@ func (d *DB) migrate() error {
 	`
 
 	_, err := d.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: add instance_id column if not exists
+	d.db.Exec("ALTER TABLE proxy_requests ADD COLUMN instance_id TEXT")
+
+	return nil
 }
 
 // Helper functions for JSON serialization

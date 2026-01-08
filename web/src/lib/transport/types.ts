@@ -137,6 +137,7 @@ export interface ProxyRequest {
   id: number;
   createdAt: string;
   updatedAt: string;
+  instanceID: string;
   requestID: string;
   sessionID: string;
   clientType: ClientType;
@@ -158,6 +159,27 @@ export interface ProxyRequest {
   cost: number;
 }
 
+// ===== ProxyUpstreamAttempt =====
+
+export type ProxyUpstreamAttemptStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+
+export interface ProxyUpstreamAttempt {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  status: ProxyUpstreamAttemptStatus;
+  proxyRequestID: number;
+  requestInfo: RequestInfo | null;
+  responseInfo: ResponseInfo | null;
+  routeID: number;
+  providerID: number;
+  inputTokenCount: number;
+  outputTokenCount: number;
+  cacheReadCount: number;
+  cacheWriteCount: number;
+  cost: number;
+}
+
 // ===== 分页 =====
 
 export interface PaginationParams {
@@ -167,7 +189,7 @@ export interface PaginationParams {
 
 // ===== WebSocket 消息 =====
 
-export type WSMessageType = 'proxy_request_update' | 'stats_update' | 'log_message';
+export type WSMessageType = 'proxy_request_update' | 'proxy_upstream_attempt_update' | 'stats_update' | 'log_message';
 
 export interface WSMessage<T = unknown> {
   type: WSMessageType;

@@ -88,6 +88,13 @@ func (h *WebSocketHub) BroadcastProxyRequest(req *domain.ProxyRequest) {
 	}
 }
 
+func (h *WebSocketHub) BroadcastProxyUpstreamAttempt(attempt *domain.ProxyUpstreamAttempt) {
+	h.broadcast <- WSMessage{
+		Type: "proxy_upstream_attempt_update",
+		Data: attempt,
+	}
+}
+
 func (h *WebSocketHub) BroadcastStats(stats interface{}) {
 	h.broadcast <- WSMessage{
 		Type: "stats_update",
