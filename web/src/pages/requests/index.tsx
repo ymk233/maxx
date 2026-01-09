@@ -339,7 +339,7 @@ function LogRow({
     <TableRow
       onClick={onClick}
       className={cn(
-        "cursor-pointer group border-none transition-all duration-500",
+        "cursor-pointer group border-none transition-none",
         // Base hover
         !isPending && !isRecent && "hover:bg-surface-hover/50",
 
