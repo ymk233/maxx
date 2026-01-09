@@ -30,6 +30,9 @@ type ClaudeContentBlock struct {
 	Input     interface{} `json:"input,omitempty"`
 	ToolUseID string      `json:"tool_use_id,omitempty"`
 	Content   string      `json:"content,omitempty"`
+	// Thinking block fields
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type ClaudeTool struct {

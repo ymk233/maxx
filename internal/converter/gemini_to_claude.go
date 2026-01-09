@@ -3,9 +3,92 @@ package converter
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Bowl42/maxx-next/internal/domain"
 )
+
+// remapFunctionCallArgs remaps Gemini's function call arguments to Claude Code expected format
+// This is critical for Claude Code compatibility as Gemini sometimes uses different parameter names
+func remapFunctionCallArgs(toolName string, args map[string]interface{}) {
+	if args == nil {
+		return
+	}
+
+	toolNameLower := strings.ToLower(toolName)
+
+	switch toolNameLower {
+	case "grep":
+		// Gemini uses "query", Claude Code expects "pattern"
+		if query, ok := args["query"]; ok {
+			if _, hasPattern := args["pattern"]; !hasPattern {
+				args["pattern"] = query
+				delete(args, "query")
+			}
+		}
+		// Claude Code uses "path" (string), NOT "paths" (array)
+		if _, hasPath := args["path"]; !hasPath {
+			if paths, ok := args["paths"]; ok {
+				pathStr := extractFirstPath(paths)
+				args["path"] = pathStr
+				delete(args, "paths")
+			} else {
+				args["path"] = "."
+			}
+		}
+
+	case "glob":
+		// Gemini uses "query", Claude Code expects "pattern"
+		if query, ok := args["query"]; ok {
+			if _, hasPattern := args["pattern"]; !hasPattern {
+				args["pattern"] = query
+				delete(args, "query")
+			}
+		}
+		// Claude Code uses "path" (string), NOT "paths" (array)
+		if _, hasPath := args["path"]; !hasPath {
+			if paths, ok := args["paths"]; ok {
+				pathStr := extractFirstPath(paths)
+				args["path"] = pathStr
+				delete(args, "paths")
+			} else {
+				args["path"] = "."
+			}
+		}
+
+	case "read":
+		// Gemini might use "path" vs "file_path"
+		if path, ok := args["path"]; ok {
+			if _, hasFilePath := args["file_path"]; !hasFilePath {
+				args["file_path"] = path
+				delete(args, "path")
+			}
+		}
+
+	case "ls":
+		// LS tool: ensure "path" parameter exists
+		if _, hasPath := args["path"]; !hasPath {
+			args["path"] = "."
+		}
+	}
+}
+
+// extractFirstPath extracts the first path from various input formats
+func extractFirstPath(paths interface{}) string {
+	switch v := paths.(type) {
+	case []interface{}:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				return s
+			}
+		}
+		return "."
+	case string:
+		return v
+	default:
+		return "."
+	}
+}
 
 func init() {
 	RegisterConverter(domain.ClientTypeGemini, domain.ClientTypeClaude, &geminiToClaudeRequest{}, &geminiToClaudeResponse{})
@@ -129,6 +212,15 @@ func (c *geminiToClaudeResponse) Transform(body []byte) ([]byte, error) {
 		candidate := resp.Candidates[0]
 		toolCallCounter := 0
 		for _, part := range candidate.Content.Parts {
+			// Handle thinking blocks (thought: true)
+			if part.Thought && part.Text != "" {
+				claudeResp.Content = append(claudeResp.Content, ClaudeContentBlock{
+					Type:      "thinking",
+					Thinking:  part.Text,
+					Signature: part.ThoughtSignature,
+				})
+				continue
+			}
 			if part.Text != "" {
 				claudeResp.Content = append(claudeResp.Content, ClaudeContentBlock{
 					Type: "text",
@@ -138,11 +230,14 @@ func (c *geminiToClaudeResponse) Transform(body []byte) ([]byte, error) {
 			if part.FunctionCall != nil {
 				hasToolUse = true
 				toolCallCounter++
+				// Apply argument remapping for Claude Code compatibility
+				args := part.FunctionCall.Args
+				remapFunctionCallArgs(part.FunctionCall.Name, args)
 				claudeResp.Content = append(claudeResp.Content, ClaudeContentBlock{
 					Type:  "tool_use",
 					ID:    fmt.Sprintf("call_%d", toolCallCounter),
 					Name:  part.FunctionCall.Name,
-					Input: part.FunctionCall.Args,
+					Input: args,
 				})
 			}
 		}
@@ -204,6 +299,20 @@ func (c *geminiToClaudeResponse) TransformChunk(chunk []byte, state *TransformSt
 		if len(geminiChunk.Candidates) > 0 {
 			candidate := geminiChunk.Candidates[0]
 			for _, part := range candidate.Content.Parts {
+				// Handle thinking blocks (thought: true)
+				if part.Thought && part.Text != "" {
+					// Send thinking content as thinking_delta
+					delta := map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": 0,
+						"delta": map[string]interface{}{
+							"type":     "thinking_delta",
+							"thinking": part.Text,
+						},
+					}
+					output = append(output, FormatSSE("content_block_delta", delta)...)
+					continue
+				}
 				if part.Text != "" {
 					delta := map[string]interface{}{
 						"type":  "content_block_delta",

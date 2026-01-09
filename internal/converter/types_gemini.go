@@ -22,6 +22,7 @@ type GeminiPart struct {
 	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
 	Thought          bool                    `json:"thought,omitempty"`
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
 }
 
 type GeminiInlineData struct {
