@@ -62,9 +62,9 @@ export function useProxyRequestUpdates() {
           updatedRequest
         );
 
-        // 更新列表缓存（乐观更新）
-        queryClient.setQueryData<ProxyRequest[]>(
-          requestKeys.lists(),
+        // 更新列表缓存（乐观更新）- 同时更新所有分页的缓存
+        queryClient.setQueriesData<ProxyRequest[]>(
+          { queryKey: requestKeys.lists() },
           (old) => {
             if (!old) return [updatedRequest];
             const index = old.findIndex((r) => r.id === updatedRequest.id);
@@ -76,9 +76,6 @@ export function useProxyRequestUpdates() {
             return [updatedRequest, ...old];
           }
         );
-
-        // 触发列表查询刷新
-        queryClient.invalidateQueries({ queryKey: requestKeys.lists() });
       }
     );
 
@@ -100,11 +97,6 @@ export function useProxyRequestUpdates() {
             return [...old, updatedAttempt];
           }
         );
-
-        // 触发 Attempts 查询刷新，确保数据一致性
-        queryClient.invalidateQueries({
-          queryKey: requestKeys.attempts(updatedAttempt.proxyRequestID),
-        });
       }
     );
 

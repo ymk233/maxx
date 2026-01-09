@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Bowl42/maxx-next/internal/adapter/provider"
@@ -81,6 +82,12 @@ func (a *CustomAdapter) Execute(ctx context.Context, w http.ResponseWriter, req 
 	// Build upstream URL
 	baseURL := a.getBaseURL(targetType)
 	requestPath := ctxutil.GetRequestPath(ctx)
+
+	// For Gemini, update model in URL path if mapping is configured
+	if clientType == domain.ClientTypeGemini && mappedModel != "" {
+		requestPath = updateGeminiModelInPath(requestPath, mappedModel)
+	}
+
 	upstreamURL := buildUpstreamURL(baseURL, requestPath)
 
 	// Create upstream request
@@ -357,6 +364,11 @@ func isStreamRequest(body []byte) bool {
 }
 
 func updateModelInBody(body []byte, model string, clientType domain.ClientType) ([]byte, error) {
+	// For Gemini, model is in URL path, not in body - don't modify
+	if clientType == domain.ClientTypeGemini {
+		return body, nil
+	}
+
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
@@ -367,6 +379,15 @@ func updateModelInBody(body []byte, model string, clientType domain.ClientType) 
 
 func buildUpstreamURL(baseURL string, requestPath string) string {
 	return strings.TrimSuffix(baseURL, "/") + requestPath
+}
+
+// Gemini URL patterns for model replacement
+var geminiModelPathPattern = regexp.MustCompile(`(/v1(?:beta|internal)?/models/)([^/:]+)(:[^/]+)?`)
+
+// updateGeminiModelInPath replaces the model in Gemini URL path
+// e.g., /v1beta/models/gemini-2.5-flash:generateContent -> /v1beta/models/gemini-2.5-pro:generateContent
+func updateGeminiModelInPath(path string, newModel string) string {
+	return geminiModelPathPattern.ReplaceAllString(path, "${1}"+newModel+"${3}")
 }
 
 func setAuthHeader(req *http.Request, clientType domain.ClientType, apiKey string) {
