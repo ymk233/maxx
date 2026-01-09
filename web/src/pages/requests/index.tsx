@@ -323,7 +323,7 @@ function LogRow({
     <TableRow
       onClick={onClick}
       className={cn(
-        "cursor-pointer group border-none transition-all duration-300 relative overflow-hidden",
+        "cursor-pointer group border-none transition-all duration-300",
         // Base styles
         !isPending && !isRecent && "hover:bg-surface-hover/50 border-l-2 border-l-transparent",
         
@@ -331,17 +331,12 @@ function LogRow({
         isFailed && "bg-error/5 hover:bg-error/10 border-l-2 border-l-transparent",
         
         // Active/Pending state - Pulse Effect
-        isPending && "bg-accent/5 hover:bg-accent/10 border-l-2 border-l-accent",
+        isPending && "bg-accent/5 hover:bg-accent/10 border-l-2 border-l-accent animate-pulse",
 
         // New Item Flash Animation
-        isRecent && "animate-in fade-in zoom-in-95 duration-500 bg-accent/20 border-l-2 border-l-accent"
+        isRecent && !isPending && "animate-in fade-in duration-700 bg-accent/20 border-l-2 border-l-accent"
       )}
     >
-      {/* Pulse Background for Pending */}
-      {isPending && (
-        <div className="absolute inset-0 animate-marquee pointer-events-none opacity-30 bg-accent/10" />
-      )}
-
       {/* Time */}
       <TableCell className="py-1 font-mono text-sm text-text-primary font-medium whitespace-nowrap">
         {formatTime(request.startTime || request.createdAt)}
