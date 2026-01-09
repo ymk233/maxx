@@ -30,6 +30,14 @@ function formatCost(microUsd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+// 计算缓存利用率: (CacheRead + CacheWrite) / (Input + CacheRead + CacheWrite) × 100
+function calcCacheRate(stats: ProviderStats): number {
+  const cacheTotal = stats.totalCacheRead + stats.totalCacheWrite;
+  const total = stats.totalInputTokens + cacheTotal;
+  if (total === 0) return 0;
+  return (cacheTotal / total) * 100;
+}
+
 // Sortable Provider Row
 type SortableProviderRowProps = {
   item: ProviderConfigItem;
@@ -206,6 +214,13 @@ export function ProviderRowContent({
           <div className="flex flex-col items-center" title={`输入: ${stats.totalInputTokens}, 输出: ${stats.totalOutputTokens}`}>
             <span className="font-bold text-blue-400">{formatTokens(stats.totalInputTokens + stats.totalOutputTokens)}</span>
             <span className="text-text-muted/60">Token</span>
+          </div>
+          {/* Cache Rate */}
+          <div className="flex flex-col items-center" title={`Read: ${formatTokens(stats.totalCacheRead)} | Write: ${formatTokens(stats.totalCacheWrite)}`}>
+            <span className={`font-bold ${calcCacheRate(stats) >= 50 ? 'text-emerald-400' : calcCacheRate(stats) >= 20 ? 'text-cyan-400' : 'text-text-secondary'}`}>
+              {calcCacheRate(stats).toFixed(1)}%
+            </span>
+            <span className="text-text-muted/60">缓存</span>
           </div>
           {/* Cost */}
           <div className="flex flex-col items-center" title={`总成本: ${formatCost(stats.totalCost)}`}>

@@ -28,6 +28,14 @@ function formatCost(microUsd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+// 计算缓存利用率: (CacheRead + CacheWrite) / (Input + CacheRead + CacheWrite) × 100
+function calcCacheRate(stats: ProviderStats): number {
+  const cacheTotal = stats.totalCacheRead + stats.totalCacheWrite;
+  const total = stats.totalInputTokens + cacheTotal;
+  if (total === 0) return 0;
+  return (cacheTotal / total) * 100;
+}
+
 interface ProviderRowProps {
   provider: Provider;
   stats?: ProviderStats;
@@ -151,6 +159,23 @@ export function ProviderRow({ provider, stats, streamingCount, onClick }: Provid
               <span className="text-[10px] text-text-muted uppercase tracking-wider font-medium mb-0.5">Tokens</span>
               <span className="font-mono font-bold text-sm text-blue-400">
                 {formatTokens(stats.totalInputTokens + stats.totalOutputTokens)}
+              </span>
+            </div>
+
+            <div className="w-px h-8 bg-border/40" />
+
+            {/* Cache Rate */}
+            <div
+              className="flex flex-col items-center justify-center px-3 py-1 min-w-[70px]"
+              title={`Read: ${formatTokens(stats.totalCacheRead)} | Write: ${formatTokens(stats.totalCacheWrite)}`}
+            >
+              <span className="text-[10px] text-text-muted uppercase tracking-wider font-medium mb-0.5">Cache</span>
+              <span className={cn(
+                "font-mono font-bold text-sm",
+                calcCacheRate(stats) >= 50 ? "text-emerald-400" :
+                calcCacheRate(stats) >= 20 ? "text-cyan-400" : "text-text-secondary"
+              )}>
+                {calcCacheRate(stats).toFixed(1)}%
               </span>
             </div>
 
