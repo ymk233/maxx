@@ -11,6 +11,7 @@ import (
 	"github.com/Bowl42/maxx-next/internal/event"
 	"github.com/Bowl42/maxx-next/internal/repository"
 	"github.com/Bowl42/maxx-next/internal/router"
+	"github.com/Bowl42/maxx-next/internal/usage"
 )
 
 // Executor handles request execution with retry logic
@@ -76,6 +77,18 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 		IsStream:     isStream,
 		Status:       "IN_PROGRESS",
 	}
+
+	// Capture client's original request info (before conversion to upstream format)
+	requestPath := ctxutil.GetRequestPath(ctx)
+	requestHeaders := ctxutil.GetRequestHeaders(ctx)
+	requestBody := ctxutil.GetRequestBody(ctx)
+	proxyReq.RequestInfo = &domain.RequestInfo{
+		Method:  req.Method,
+		URL:     requestPath,
+		Headers: flattenHeaders(requestHeaders),
+		Body:    string(requestBody),
+	}
+
 	if err := e.proxyRequestRepo.Create(proxyReq); err != nil {
 		// Log but continue
 	}
@@ -193,9 +206,12 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 			// Put attempt into context so adapter can populate request/response info
 			attemptCtx := ctxutil.WithUpstreamAttempt(ctx, attemptRecord)
 
+			// Wrap ResponseWriter to capture actual client response
+			responseCapture := NewResponseCapture(w)
+
 			// Execute request
 			log.Printf("[Executor] Route %d, attempt %d: executing...", routeIdx+1, attempt+1)
-			err := matchedRoute.ProviderAdapter.Execute(attemptCtx, w, req, matchedRoute.Provider)
+			err := matchedRoute.ProviderAdapter.Execute(attemptCtx, responseCapture, req, matchedRoute.Provider)
 			if err == nil {
 				// Success
 				log.Printf("[Executor] Route %d, attempt %d: SUCCESS", routeIdx+1, attempt+1)
@@ -211,19 +227,25 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 				proxyReq.Duration = proxyReq.EndTime.Sub(proxyReq.StartTime)
 				proxyReq.FinalProxyUpstreamAttemptID = attemptRecord.ID
 
-				// Copy token usage from successful attempt to request
-				proxyReq.InputTokenCount = attemptRecord.InputTokenCount
-				proxyReq.OutputTokenCount = attemptRecord.OutputTokenCount
-				proxyReq.CacheReadCount = attemptRecord.CacheReadCount
-				proxyReq.CacheWriteCount = attemptRecord.CacheWriteCount
-				proxyReq.Cache5mWriteCount = attemptRecord.Cache5mWriteCount
-				proxyReq.Cache1hWriteCount = attemptRecord.Cache1hWriteCount
-				proxyReq.Cost = attemptRecord.Cost
-
-				// Always copy response info from successful attempt
-				if attemptRecord.ResponseInfo != nil {
-					proxyReq.ResponseInfo = attemptRecord.ResponseInfo
+				// Capture actual client response (what was sent to client, e.g. Claude format)
+				// This is different from attemptRecord.ResponseInfo which is upstream response (Gemini format)
+				proxyReq.ResponseInfo = &domain.ResponseInfo{
+					Status:  responseCapture.StatusCode(),
+					Headers: responseCapture.CapturedHeaders(),
+					Body:    responseCapture.Body(),
 				}
+
+				// Extract token usage from final client response (not from upstream attempt)
+				// This ensures we use the correct format (Claude/OpenAI/Gemini) for the client type
+				if metrics := usage.ExtractFromResponse(responseCapture.Body()); metrics != nil {
+					proxyReq.InputTokenCount = metrics.InputTokens
+					proxyReq.OutputTokenCount = metrics.OutputTokens
+					proxyReq.CacheReadCount = metrics.CacheReadCount
+					proxyReq.CacheWriteCount = metrics.CacheCreationCount
+					proxyReq.Cache5mWriteCount = metrics.Cache5mCreationCount
+					proxyReq.Cache1hWriteCount = metrics.Cache1hCreationCount
+				}
+				proxyReq.Cost = attemptRecord.Cost
 
 				_ = e.proxyRequestRepo.Update(proxyReq)
 
@@ -253,16 +275,27 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 
 			// Update proxyReq with latest attempt info (even on failure)
 			proxyReq.FinalProxyUpstreamAttemptID = attemptRecord.ID
-			proxyReq.InputTokenCount = attemptRecord.InputTokenCount
-			proxyReq.OutputTokenCount = attemptRecord.OutputTokenCount
-			proxyReq.CacheReadCount = attemptRecord.CacheReadCount
-			proxyReq.CacheWriteCount = attemptRecord.CacheWriteCount
-			proxyReq.Cache5mWriteCount = attemptRecord.Cache5mWriteCount
-			proxyReq.Cache1hWriteCount = attemptRecord.Cache1hWriteCount
-			proxyReq.Cost = attemptRecord.Cost
-			if attemptRecord.ResponseInfo != nil {
-				proxyReq.ResponseInfo = attemptRecord.ResponseInfo
+
+			// Capture actual client response (even on failure, if any response was sent)
+			if responseCapture.Body() != "" {
+				proxyReq.ResponseInfo = &domain.ResponseInfo{
+					Status:  responseCapture.StatusCode(),
+					Headers: responseCapture.CapturedHeaders(),
+					Body:    responseCapture.Body(),
+				}
+
+				// Extract token usage from final client response
+				if metrics := usage.ExtractFromResponse(responseCapture.Body()); metrics != nil {
+					proxyReq.InputTokenCount = metrics.InputTokens
+					proxyReq.OutputTokenCount = metrics.OutputTokens
+					proxyReq.CacheReadCount = metrics.CacheReadCount
+					proxyReq.CacheWriteCount = metrics.CacheCreationCount
+					proxyReq.Cache5mWriteCount = metrics.Cache5mCreationCount
+					proxyReq.Cache1hWriteCount = metrics.Cache1hCreationCount
+				}
 			}
+			proxyReq.Cost = attemptRecord.Cost
+
 			_ = e.proxyRequestRepo.Update(proxyReq)
 			if e.broadcaster != nil {
 				e.broadcaster.BroadcastProxyRequest(proxyReq)
@@ -385,4 +418,18 @@ func (e *Executor) calculateBackoff(config *domain.RetryConfig, attempt int) tim
 
 func generateRequestID() string {
 	return time.Now().Format("20060102150405.000000")
+}
+
+// flattenHeaders converts http.Header to map[string]string (taking first value)
+func flattenHeaders(h http.Header) map[string]string {
+	if h == nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for key, values := range h {
+		if len(values) > 0 {
+			result[key] = values[0]
+		}
+	}
+	return result
 }

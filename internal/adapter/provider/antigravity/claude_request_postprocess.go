@@ -1,0 +1,526 @@
+package antigravity
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// antigravityIdentity is the identity instruction injected when user doesn't provide one
+// (exactly like Antigravity-Manager's build_system_instruction)
+const antigravityIdentity = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+**Absolute paths only**
+**Proactiveness**`
+
+// PostProcessClaudeRequest applies post-processing to the converted Gemini request
+// Similar to CLIProxyAPI's request handling logic:
+// 1. Injects Antigravity identity into system instruction (like Antigravity-Manager)
+// 2. Cleans tool input schemas for Gemini compatibility (like Antigravity-Manager)
+// 3. Injects interleaved thinking hint when tools + thinking are enabled
+// 4. Closes broken tool loops by injecting synthetic messages (like Antigravity-Manager)
+// 5. Uses cached signatures for thinking blocks
+// 6. Applies skip_thought_signature_validator for tool calls without valid signatures
+func PostProcessClaudeRequest(geminiBody []byte, sessionID string, hasThinking bool) []byte {
+	var request map[string]interface{}
+	if err := json.Unmarshal(geminiBody, &request); err != nil {
+		return geminiBody
+	}
+
+	modified := false
+
+	// 1. Inject Antigravity identity into system instruction (like Antigravity-Manager)
+	if injectAntigravityIdentity(request) {
+		modified = true
+	}
+
+	// 2. Clean tool input schemas for Gemini compatibility (like Antigravity-Manager)
+	if cleanToolInputSchemas(request) {
+		modified = true
+	}
+
+	// 3. Check if we have tools and thinking enabled
+	hasTools := hasToolDeclarations(request)
+
+	// 4. Inject interleaved thinking hint (like CLIProxyAPI)
+	if hasThinking && hasTools {
+		if injectInterleavedHint(request) {
+			modified = true
+		}
+	}
+
+	// 5. Close broken tool loops for thinking mode (like Antigravity-Manager)
+	// This must be called when thinking is enabled to recover from stripped thinking blocks
+	if hasThinking {
+		if CloseToolLoopForThinking(request) {
+			modified = true
+		}
+	}
+
+	// 6. Process contents for signature caching and skip sentinel
+	if contents, ok := request["contents"].([]interface{}); ok {
+		if processContentsForSignatures(contents, sessionID) {
+			modified = true
+		}
+	}
+
+	if !modified {
+		return geminiBody
+	}
+
+	result, err := json.Marshal(request)
+	if err != nil {
+		return geminiBody
+	}
+	return result
+}
+
+// checkForAntigravityIdentity checks if system instruction already contains Antigravity identity
+// (like Antigravity-Manager's hybrid check)
+func checkForAntigravityIdentity(sysInst map[string]interface{}) bool {
+	parts, ok := sysInst["parts"].([]interface{})
+	if !ok {
+		return false
+	}
+
+	for _, part := range parts {
+		if partMap, ok := part.(map[string]interface{}); ok {
+			if text, ok := partMap["text"].(string); ok {
+				if strings.Contains(text, "You are Antigravity") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// injectAntigravityIdentity injects Antigravity identity into system instruction
+// (exactly like Antigravity-Manager's build_system_instruction)
+func injectAntigravityIdentity(request map[string]interface{}) bool {
+	sysInst, ok := request["systemInstruction"].(map[string]interface{})
+	if !ok {
+		// No system instruction exists, create new one with identity
+		request["systemInstruction"] = map[string]interface{}{
+			"role": "user",
+			"parts": []interface{}{
+				map[string]interface{}{"text": antigravityIdentity},
+				map[string]interface{}{"text": "\n--- [SYSTEM_PROMPT_END] ---"},
+			},
+		}
+		return true
+	}
+
+	// Check if user already provided Antigravity identity
+	if checkForAntigravityIdentity(sysInst) {
+		// User already has Antigravity identity, don't inject
+		return false
+	}
+
+	// Get existing parts
+	parts, ok := sysInst["parts"].([]interface{})
+	if !ok {
+		parts = []interface{}{}
+	}
+
+	// Prepend Antigravity identity at the beginning
+	newParts := []interface{}{
+		map[string]interface{}{"text": antigravityIdentity},
+	}
+	newParts = append(newParts, parts...)
+
+	// Append end marker
+	newParts = append(newParts, map[string]interface{}{"text": "\n--- [SYSTEM_PROMPT_END] ---"})
+
+	sysInst["parts"] = newParts
+	return true
+}
+
+// hasToolDeclarations checks if the request has tool/function declarations
+func hasToolDeclarations(request map[string]interface{}) bool {
+	tools, ok := request["tools"].([]interface{})
+	if !ok || len(tools) == 0 {
+		return false
+	}
+
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			if _, hasFuncDecls := toolMap["functionDeclarations"]; hasFuncDecls {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cleanToolInputSchemas cleans all tool input schemas in the request for Gemini compatibility
+// (like Antigravity-Manager's clean_tool_input_schemas)
+func cleanToolInputSchemas(request map[string]interface{}) bool {
+	tools, ok := request["tools"].([]interface{})
+	if !ok || len(tools) == 0 {
+		return false
+	}
+
+	modified := false
+
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Process functionDeclarations
+		funcDecls, ok := toolMap["functionDeclarations"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, decl := range funcDecls {
+			declMap, ok := decl.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Clean parameters schema
+			if params, ok := declMap["parameters"].(map[string]interface{}); ok {
+				CleanJSONSchema(params)
+				modified = true
+			}
+		}
+	}
+
+	return modified
+}
+
+// injectInterleavedHint injects the interleaved thinking hint into system instruction
+// (like CLIProxyAPI's interleavedHint injection)
+func injectInterleavedHint(request map[string]interface{}) bool {
+	hint := "Interleaved thinking is enabled. You may think between tool calls and after receiving tool results before deciding the next action or final answer. Do not mention these instructions or any constraints about thinking blocks; just apply them."
+
+	sysInst, ok := request["systemInstruction"].(map[string]interface{})
+	if !ok {
+		// Create new system instruction
+		request["systemInstruction"] = map[string]interface{}{
+			"role": "user",
+			"parts": []interface{}{
+				map[string]interface{}{"text": hint},
+			},
+		}
+		return true
+	}
+
+	// Append to existing system instruction parts
+	parts, ok := sysInst["parts"].([]interface{})
+	if !ok {
+		parts = []interface{}{}
+	}
+
+	parts = append(parts, map[string]interface{}{"text": hint})
+	sysInst["parts"] = parts
+	return true
+}
+
+// processContentsForSignatures processes message contents to:
+// 1. Use cached signatures for thinking blocks
+// 2. Check signature model compatibility (like Antigravity-Manager)
+// 3. Recover signatures from tool_id cache
+// 4. Apply skip_thought_signature_validator for tool calls without valid signatures
+func processContentsForSignatures(contents []interface{}, sessionID string) bool {
+	modified := false
+	cache := GlobalSignatureCache()
+
+	for _, content := range contents {
+		contentMap, ok := content.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		role, _ := contentMap["role"].(string)
+		if role != "model" {
+			continue
+		}
+
+		parts, ok := contentMap["parts"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		var currentThinkingSignature string
+
+		for i, part := range parts {
+			partMap, ok := part.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Check if this is a thinking part
+			if thought, ok := partMap["thought"].(bool); ok && thought {
+				text, _ := partMap["text"].(string)
+				existingSig, _ := partMap["thoughtSignature"].(string)
+
+				// Try to get cached signature first
+				if sessionID != "" && text != "" {
+					if cachedSig := cache.GetSessionSignature(sessionID, text); cachedSig != "" {
+						partMap["thoughtSignature"] = cachedSig
+						currentThinkingSignature = cachedSig
+						modified = true
+						parts[i] = partMap
+						continue
+					}
+				}
+
+				// Use existing signature if valid
+				if HasValidSignature(existingSig) {
+					currentThinkingSignature = existingSig
+				} else {
+					// Invalid or no signature - drop the thinking block
+					// by removing it from parts (handled by the caller)
+					currentThinkingSignature = ""
+				}
+			}
+
+			// Check if this is a function call part
+			if fc, hasFc := partMap["functionCall"].(map[string]interface{}); hasFc {
+				existingSig, _ := partMap["thoughtSignature"].(string)
+
+				// [FIX] Try to recover signature from tool_id cache (like Antigravity-Manager)
+				if !HasValidSignature(existingSig) {
+					if fcID, ok := fc["id"].(string); ok && fcID != "" {
+						if cachedSig := cache.GetToolSignature(fcID); cachedSig != "" {
+							existingSig = cachedSig
+							partMap["thoughtSignature"] = cachedSig
+							modified = true
+						}
+					}
+				}
+
+				// If still no valid signature, use current thinking signature or skip sentinel
+				if !HasValidSignature(existingSig) {
+					if HasValidSignature(currentThinkingSignature) {
+						partMap["thoughtSignature"] = currentThinkingSignature
+					} else {
+						// Use skip sentinel (like CLIProxyAPI)
+						partMap["thoughtSignature"] = SkipSignatureValidator
+					}
+					modified = true
+				}
+				parts[i] = partMap
+			}
+		}
+
+		// Filter out unsigned thinking blocks
+		var filteredParts []interface{}
+		for _, part := range parts {
+			partMap, ok := part.(map[string]interface{})
+			if !ok {
+				filteredParts = append(filteredParts, part)
+				continue
+			}
+
+			// Keep non-thinking parts
+			thought, isThought := partMap["thought"].(bool)
+			if !isThought || !thought {
+				filteredParts = append(filteredParts, part)
+				continue
+			}
+
+			// For thinking parts, only keep if they have valid signature
+			sig, _ := partMap["thoughtSignature"].(string)
+			if HasValidSignature(sig) {
+				filteredParts = append(filteredParts, part)
+			}
+			// Drop unsigned thinking blocks (they break API validation)
+		}
+
+		if len(filteredParts) != len(parts) {
+			contentMap["parts"] = filteredParts
+			modified = true
+		}
+	}
+
+	return modified
+}
+
+// HasThinkingEnabled checks if thinking is enabled in the original request
+func HasThinkingEnabled(requestBody []byte) bool {
+	var request map[string]interface{}
+	if err := json.Unmarshal(requestBody, &request); err != nil {
+		return false
+	}
+
+	// Check for Claude format thinking config
+	if thinking, ok := request["thinking"].(map[string]interface{}); ok {
+		if thinkingType, _ := thinking["type"].(string); thinkingType == "enabled" {
+			return true
+		}
+	}
+
+	// Check for Gemini format thinking config
+	if genConfig, ok := request["generationConfig"].(map[string]interface{}); ok {
+		if thinkingConfig, ok := genConfig["thinkingConfig"].(map[string]interface{}); ok {
+			if includeThoughts, _ := thinkingConfig["include_thoughts"].(bool); includeThoughts {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// IsClaudeThinkingModel checks if the model supports thinking
+func IsClaudeThinkingModel(model string) bool {
+	modelLower := strings.ToLower(model)
+	thinkingModels := []string{
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"gemini-3",
+		"claude-sonnet-4",
+		"claude-opus-4",
+	}
+
+	for _, m := range thinkingModels {
+		if strings.Contains(modelLower, m) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ConversationState represents the state of conversation for tool loop detection
+// (like Antigravity-Manager's ConversationState)
+type ConversationState struct {
+	InToolLoop       bool
+	LastAssistantIdx int // -1 if not found
+}
+
+// analyzeConversationState analyzes the conversation to detect tool loops
+// (like Antigravity-Manager's analyze_conversation_state)
+func analyzeConversationState(contents []interface{}) ConversationState {
+	state := ConversationState{
+		LastAssistantIdx: -1,
+	}
+
+	if len(contents) == 0 {
+		return state
+	}
+
+	// Find last model/assistant message index
+	for i := len(contents) - 1; i >= 0; i-- {
+		content, ok := contents[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := content["role"].(string)
+		if role == "model" {
+			state.LastAssistantIdx = i
+			break
+		}
+	}
+
+	// Check if the very last message is a Tool Result (User role with functionResponse)
+	lastContent, ok := contents[len(contents)-1].(map[string]interface{})
+	if !ok {
+		return state
+	}
+
+	role, _ := lastContent["role"].(string)
+	if role != "user" {
+		return state
+	}
+
+	parts, ok := lastContent["parts"].([]interface{})
+	if !ok {
+		return state
+	}
+
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Check for functionResponse (tool_result in Gemini format)
+		if _, hasFR := partMap["functionResponse"]; hasFR {
+			state.InToolLoop = true
+			break
+		}
+	}
+
+	return state
+}
+
+// hasThinkingBlockInContent checks if a content has thinking blocks
+func hasThinkingBlockInContent(content map[string]interface{}) bool {
+	parts, ok := content["parts"].([]interface{})
+	if !ok {
+		return false
+	}
+
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Check for thought: true (thinking block in Gemini format)
+		if thought, ok := partMap["thought"].(bool); ok && thought {
+			return true
+		}
+	}
+	return false
+}
+
+// CloseToolLoopForThinking recovers from broken tool loops by injecting synthetic messages
+// (exactly like Antigravity-Manager's close_tool_loop_for_thinking)
+//
+// When client strips valid thinking blocks (leaving only ToolUse), and we are in a tool loop,
+// the API will reject the request because "Assistant message must start with thinking".
+// We cannot fake the signature.
+// Solution: Close the loop artificially so the model starts fresh.
+func CloseToolLoopForThinking(request map[string]interface{}) bool {
+	contents, ok := request["contents"].([]interface{})
+	if !ok || len(contents) == 0 {
+		return false
+	}
+
+	state := analyzeConversationState(contents)
+
+	if !state.InToolLoop {
+		return false
+	}
+
+	// Check if the last assistant message has a thinking block
+	hasThinking := false
+	if state.LastAssistantIdx >= 0 && state.LastAssistantIdx < len(contents) {
+		if content, ok := contents[state.LastAssistantIdx].(map[string]interface{}); ok {
+			hasThinking = hasThinkingBlockInContent(content)
+		}
+	}
+
+	// If we are in a tool loop BUT the assistant message has no thinking block,
+	// we must break the loop by injecting synthetic messages
+	if !hasThinking {
+		// Strategy:
+		// 1. Inject a "fake" Assistant message saying "Tool execution completed."
+		// 2. Inject a "fake" User message saying "Proceed."
+		// This forces the model to generate a NEW turn with a fresh Thinking block.
+
+		syntheticAssistant := map[string]interface{}{
+			"role": "model",
+			"parts": []interface{}{
+				map[string]interface{}{"text": "[Tool execution completed. Please proceed.]"},
+			},
+		}
+
+		syntheticUser := map[string]interface{}{
+			"role": "user",
+			"parts": []interface{}{
+				map[string]interface{}{"text": "Proceed."},
+			},
+		}
+
+		contents = append(contents, syntheticAssistant, syntheticUser)
+		request["contents"] = contents
+		return true
+	}
+
+	return false
+}

@@ -17,6 +17,7 @@ import (
 	ctxutil "github.com/Bowl42/maxx-next/internal/context"
 	"github.com/Bowl42/maxx-next/internal/domain"
 	"github.com/Bowl42/maxx-next/internal/usage"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -54,8 +55,18 @@ func (a *AntigravityAdapter) SupportedClientTypes() []domain.ClientType {
 
 func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter, req *http.Request, provider *domain.Provider) error {
 	clientType := ctxutil.GetClientType(ctx)
-	mappedModel := ctxutil.GetMappedModel(ctx)
+	requestModel := ctxutil.GetRequestModel(ctx) // Original model from request (e.g., "claude-3-5-sonnet-20241022-online")
+	mappedModel := ctxutil.GetMappedModel(ctx)   // Mapped model after route resolution
 	requestBody := ctxutil.GetRequestBody(ctx)
+
+	// [Model Mapping] Apply Antigravity model mapping (like Antigravity-Manager)
+	// Only map if route didn't provide a mapping (mappedModel empty or same as request)
+	if mappedModel == "" || mappedModel == requestModel {
+		// Route didn't provide mapping, use our internal mapping
+		mappedModel = MapClaudeModelToGemini(requestModel)
+	}
+	// If route provided a different mappedModel, trust it and don't re-map
+	// (user/route has explicitly configured the target model)
 
 	// Get streaming flag from context (already detected correctly for Gemini URL path)
 	stream := ctxutil.GetIsStream(ctx)
@@ -82,9 +93,21 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 		geminiBody = unwrapGeminiCLIEnvelope(requestBody)
 	}
 
+	// [SessionID Support] Extract metadata.user_id from original request for sessionId (like Antigravity-Manager)
+	sessionID := extractSessionID(requestBody)
+
+	// [Post-Processing] Apply Claude request post-processing (like CLIProxyAPI)
+	// - Inject interleaved thinking hint when tools + thinking enabled
+	// - Use cached signatures for thinking blocks
+	// - Apply skip_thought_signature_validator for tool calls without valid signatures
+	if clientType == domain.ClientTypeClaude {
+		hasThinking := HasThinkingEnabled(requestBody)
+		geminiBody = PostProcessClaudeRequest(geminiBody, sessionID, hasThinking)
+	}
+
 	// Wrap request in v1internal format
 	config := provider.Config.Antigravity
-	upstreamBody, err := wrapV1InternalRequest(geminiBody, config.ProjectID, mappedModel)
+	upstreamBody, err := wrapV1InternalRequest(geminiBody, config.ProjectID, requestModel, mappedModel, sessionID)
 	if err != nil {
 		return domain.NewProxyErrorWithMessage(domain.ErrFormatConversion, true, "failed to wrap request for v1internal")
 	}
@@ -158,11 +181,26 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 				Body:    string(body),
 			}
 		}
-		return domain.NewProxyErrorWithMessage(
+
+		// Parse retry info for 429/5xx responses (like Antigravity-Manager)
+		var retryAfter time.Duration
+		if retryInfo := ParseRetryInfo(resp.StatusCode, body); retryInfo != nil {
+			// Apply jitter to prevent thundering herd
+			retryAfter = ApplyJitter(retryInfo.Delay)
+		}
+
+		proxyErr := domain.NewProxyErrorWithMessage(
 			fmt.Errorf("upstream error: %s", string(body)),
 			isRetryableStatusCode(resp.StatusCode),
 			fmt.Sprintf("upstream returned status %d", resp.StatusCode),
 		)
+
+		// Set retry info on error for upstream handling
+		if retryAfter > 0 {
+			proxyErr.RetryAfter = retryAfter
+		}
+
+		return proxyErr
 	}
 
 	// Handle response
@@ -282,7 +320,15 @@ func (a *AntigravityAdapter) handleNonStreamResponse(ctx context.Context, w http
 	}
 
 	var responseBody []byte
-	if needsConversion {
+
+	// Use specialized Claude response conversion (like Antigravity-Manager)
+	if clientType == domain.ClientTypeClaude {
+		requestModel := ctxutil.GetRequestModel(ctx)
+		responseBody, err = convertGeminiToClaudeResponse(unwrappedBody, requestModel)
+		if err != nil {
+			return domain.NewProxyErrorWithMessage(domain.ErrFormatConversion, false, "failed to transform response")
+		}
+	} else if needsConversion {
 		responseBody, err = a.converter.TransformResponse(targetType, clientType, unwrappedBody)
 		if err != nil {
 			return domain.NewProxyErrorWithMessage(domain.ErrFormatConversion, false, "failed to transform response")
@@ -325,8 +371,21 @@ func (a *AntigravityAdapter) handleStreamResponse(ctx context.Context, w http.Re
 		return domain.NewProxyErrorWithMessage(domain.ErrUpstreamError, false, "streaming not supported")
 	}
 
+	// Use specialized Claude SSE handler for Claude clients
+	isClaudeClient := clientType == domain.ClientTypeClaude
+
+	// Extract sessionID for signature caching (like CLIProxyAPI)
+	requestBody := ctxutil.GetRequestBody(ctx)
+	sessionID := extractSessionID(requestBody)
+
+	// Get original request model for Claude response (like Antigravity-Manager)
+	requestModel := ctxutil.GetRequestModel(ctx)
+
 	var state *converter.TransformState
-	if needsConversion {
+	var claudeState *ClaudeStreamingState
+	if isClaudeClient {
+		claudeState = NewClaudeStreamingStateWithSession(sessionID, requestModel)
+	} else if needsConversion {
 		state = converter.NewTransformState()
 	}
 
@@ -393,8 +452,11 @@ func (a *AntigravityAdapter) handleStreamResponse(ctx context.Context, w http.Re
 				unwrappedLine := unwrapV1InternalSSEChunk(lineBytes)
 
 				var output []byte
-				if needsConversion {
-					// Transform the chunk
+				if isClaudeClient {
+					// Use specialized Claude SSE transformation
+					output = claudeState.ProcessGeminiSSELine(string(unwrappedLine))
+				} else if needsConversion {
+					// Transform the chunk using generic converter
 					transformed, transformErr := a.converter.TransformStreamChunk(targetType, clientType, unwrappedLine, state)
 					if transformErr != nil {
 						continue // Skip malformed chunks
@@ -418,13 +480,34 @@ func (a *AntigravityAdapter) handleStreamResponse(ctx context.Context, w http.Re
 
 		if err != nil {
 			if err == io.EOF {
+				// Ensure Claude clients get termination events
+				if isClaudeClient && claudeState != nil {
+					if forceStop := claudeState.EmitForceStop(); len(forceStop) > 0 {
+						_, _ = w.Write(forceStop)
+						flusher.Flush()
+					}
+				}
 				extractTokens()
 				return nil
 			}
 			// Upstream connection closed - check if client is still connected
 			if ctx.Err() != nil {
+				// Try to send termination events for Claude clients
+				if isClaudeClient && claudeState != nil {
+					if forceStop := claudeState.EmitForceStop(); len(forceStop) > 0 {
+						_, _ = w.Write(forceStop)
+						flusher.Flush()
+					}
+				}
 				extractTokens()
 				return domain.NewProxyErrorWithMessage(ctx.Err(), false, "client disconnected")
+			}
+			// Ensure Claude clients get termination events
+			if isClaudeClient && claudeState != nil {
+				if forceStop := claudeState.EmitForceStop(); len(forceStop) > 0 {
+					_, _ = w.Write(forceStop)
+					flusher.Flush()
+				}
 			}
 			extractTokens()
 			return nil
@@ -441,6 +524,23 @@ func isStreamRequest(body []byte) bool {
 	}
 	stream, _ := req["stream"].(bool)
 	return stream
+}
+
+// extractSessionID extracts metadata.user_id from request body for use as sessionId
+// (like Antigravity-Manager's sessionId support)
+func extractSessionID(body []byte) string {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return ""
+	}
+
+	metadata, ok := req["metadata"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	userID, _ := metadata["user_id"].(string)
+	return userID
 }
 
 // unwrapGeminiCLIEnvelope extracts the inner request from Gemini CLI envelope format
@@ -461,9 +561,96 @@ func unwrapGeminiCLIEnvelope(body []byte) []byte {
 	return body
 }
 
+// RequestConfig holds resolved request configuration (like Antigravity-Manager)
+type RequestConfig struct {
+	RequestType        string                 // "agent", "web_search", or "image_gen"
+	FinalModel         string
+	InjectGoogleSearch bool
+	ImageConfig        map[string]interface{} // Image generation config (if request_type is image_gen)
+}
+
+// resolveRequestConfig determines request type and final model name
+// (like Antigravity-Manager's resolve_request_config)
+func resolveRequestConfig(originalModel, mappedModel string, innerRequest map[string]interface{}) RequestConfig {
+	// 1. Image Generation Check (Priority)
+	if strings.HasPrefix(mappedModel, "gemini-3-pro-image") {
+		imageConfig, cleanModel := ParseImageConfig(originalModel)
+		return RequestConfig{
+			RequestType: "image_gen",
+			FinalModel:  cleanModel,
+			ImageConfig: imageConfig,
+		}
+	}
+
+	// Check for -online suffix
+	isOnlineSuffix := strings.HasSuffix(originalModel, "-online")
+
+	// Check for networking tools in the request
+	hasNetworkingTool := detectsNetworkingTool(innerRequest)
+
+	// Strip -online suffix from final model
+	finalModel := strings.TrimSuffix(mappedModel, "-online")
+
+	// Determine if we should enable networking
+	enableNetworking := isOnlineSuffix || hasNetworkingTool
+
+	// If networking enabled, force gemini-2.5-flash (only model that supports googleSearch)
+	if enableNetworking && finalModel != "gemini-2.5-flash" {
+		finalModel = "gemini-2.5-flash"
+	}
+
+	requestType := "agent"
+	if enableNetworking {
+		requestType = "web_search"
+	}
+
+	return RequestConfig{
+		RequestType:        requestType,
+		FinalModel:         finalModel,
+		InjectGoogleSearch: enableNetworking,
+	}
+}
+
+// detectsNetworkingTool checks if request contains networking/web search tools
+func detectsNetworkingTool(innerRequest map[string]interface{}) bool {
+	tools, ok := innerRequest["tools"].([]interface{})
+	if !ok {
+		return false
+	}
+
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check googleSearch or googleSearchRetrieval
+		if _, ok := toolMap["googleSearch"]; ok {
+			return true
+		}
+		if _, ok := toolMap["googleSearchRetrieval"]; ok {
+			return true
+		}
+
+		// Check functionDeclarations
+		if decls, ok := toolMap["functionDeclarations"].([]interface{}); ok {
+			for _, decl := range decls {
+				if declMap, ok := decl.(map[string]interface{}); ok {
+					name, _ := declMap["name"].(string)
+					if name == "web_search" || name == "google_search" || name == "google_search_retrieval" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // wrapV1InternalRequest wraps the request body in v1internal format
 // Similar to Antigravity-Manager's wrap_request function
-func wrapV1InternalRequest(body []byte, projectID, model string) ([]byte, error) {
+func wrapV1InternalRequest(body []byte, projectID, originalModel, mappedModel, sessionID string) ([]byte, error) {
 	var innerRequest map[string]interface{}
 	if err := json.Unmarshal(body, &innerRequest); err != nil {
 		return nil, err
@@ -472,16 +659,115 @@ func wrapV1InternalRequest(body []byte, projectID, model string) ([]byte, error)
 	// Remove model field from inner request if present (will be at top level)
 	delete(innerRequest, "model")
 
+	// Resolve request configuration (like Antigravity-Manager)
+	config := resolveRequestConfig(originalModel, mappedModel, innerRequest)
+
+	// Inject googleSearch if needed and no function declarations present
+	if config.InjectGoogleSearch {
+		injectGoogleSearchTool(innerRequest)
+	}
+
+	// Handle imageConfig for image generation models (like Antigravity-Manager)
+	if config.ImageConfig != nil {
+		// 1. Remove tools (image generation does not support tools)
+		delete(innerRequest, "tools")
+		// 2. Remove systemInstruction (image generation does not support system prompts)
+		delete(innerRequest, "systemInstruction")
+		// 3. Clean generationConfig and inject imageConfig
+		if genConfig, ok := innerRequest["generationConfig"].(map[string]interface{}); ok {
+			delete(genConfig, "thinkingConfig")
+			delete(genConfig, "responseMimeType")
+			delete(genConfig, "responseModalities")
+			genConfig["imageConfig"] = config.ImageConfig
+		} else {
+			innerRequest["generationConfig"] = map[string]interface{}{
+				"imageConfig": config.ImageConfig,
+			}
+		}
+	}
+
+	// Deep clean [undefined] strings (Cherry Studio client common injection)
+	deepCleanUndefined(innerRequest)
+
+	// [SessionID Support] If metadata.user_id was provided, use it as sessionId (like Antigravity-Manager)
+	if sessionID != "" {
+		innerRequest["sessionId"] = sessionID
+	}
+
+	// Generate UUID requestId (like Antigravity-Manager)
+	requestID := fmt.Sprintf("agent-%s", uuid.New().String())
+
 	wrapped := map[string]interface{}{
 		"project":     projectID,
-		"requestId":   fmt.Sprintf("agent-%d", time.Now().UnixNano()),
+		"requestId":   requestID,
 		"request":     innerRequest,
-		"model":       model,
+		"model":       config.FinalModel,
 		"userAgent":   "antigravity",
-		"requestType": "agent", // Must be "agent", "web_search", or "image_gen" (not "gemini")
+		"requestType": config.RequestType,
 	}
 
 	return json.Marshal(wrapped)
+}
+
+// deepCleanUndefined recursively removes [undefined] strings from request body
+// (like Antigravity-Manager's deep_clean_undefined)
+func deepCleanUndefined(data map[string]interface{}) {
+	for key, val := range data {
+		if s, ok := val.(string); ok && s == "[undefined]" {
+			delete(data, key)
+			continue
+		}
+		if nested, ok := val.(map[string]interface{}); ok {
+			deepCleanUndefined(nested)
+		}
+		if arr, ok := val.([]interface{}); ok {
+			for _, item := range arr {
+				if m, ok := item.(map[string]interface{}); ok {
+					deepCleanUndefined(m)
+				}
+			}
+		}
+	}
+}
+
+// injectGoogleSearchTool injects googleSearch tool if not already present
+// and no functionDeclarations exist (can't mix search with functions)
+func injectGoogleSearchTool(innerRequest map[string]interface{}) {
+	tools, ok := innerRequest["tools"].([]interface{})
+	if !ok {
+		tools = []interface{}{}
+	}
+
+	// Check if functionDeclarations already exist
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			if _, hasFuncDecls := toolMap["functionDeclarations"]; hasFuncDecls {
+				// Can't mix search tools with function declarations
+				return
+			}
+		}
+	}
+
+	// Remove existing googleSearch/googleSearchRetrieval
+	var filteredTools []interface{}
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			if _, ok := toolMap["googleSearch"]; ok {
+				continue
+			}
+			if _, ok := toolMap["googleSearchRetrieval"]; ok {
+				continue
+			}
+		}
+		filteredTools = append(filteredTools, tool)
+	}
+
+	// Add googleSearch
+	filteredTools = append(filteredTools, map[string]interface{}{
+		"googleSearch": map[string]interface{}{},
+	})
+
+	innerRequest["tools"] = filteredTools
 }
 
 // unwrapV1InternalResponse extracts the response from v1internal wrapper
@@ -588,4 +874,128 @@ func isRetryableStatusCode(code int) bool {
 	default:
 		return false
 	}
+}
+
+// convertGeminiToClaudeResponse converts a non-streaming Gemini response to Claude format
+// (like Antigravity-Manager's response conversion)
+func convertGeminiToClaudeResponse(geminiBody []byte, requestModel string) ([]byte, error) {
+	var geminiResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text             string                  `json:"text,omitempty"`
+					Thought          bool                    `json:"thought,omitempty"`
+					ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
+					FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
+				} `json:"parts"`
+			} `json:"content"`
+			FinishReason string `json:"finishReason,omitempty"`
+		} `json:"candidates"`
+		UsageMetadata *GeminiUsageMetadata `json:"usageMetadata,omitempty"`
+		ModelVersion  string               `json:"modelVersion,omitempty"`
+		ResponseID    string               `json:"responseId,omitempty"`
+	}
+
+	if err := json.Unmarshal(geminiBody, &geminiResp); err != nil {
+		return nil, err
+	}
+
+	// Build Claude response
+	claudeResp := map[string]interface{}{
+		"id":            geminiResp.ResponseID,
+		"type":          "message",
+		"role":          "assistant",
+		"model":         requestModel, // Return original Claude model, not Gemini model
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+	}
+
+	if claudeResp["id"] == "" {
+		claudeResp["id"] = fmt.Sprintf("msg_%d", generateRandomID())
+	}
+
+	// Build usage (like Antigravity-Manager's to_claude_usage)
+	usage := map[string]interface{}{
+		"input_tokens":               0,
+		"output_tokens":              0,
+		"cache_creation_input_tokens": 0,
+	}
+	if geminiResp.UsageMetadata != nil {
+		cachedTokens := geminiResp.UsageMetadata.CachedContentTokenCount
+		inputTokens := geminiResp.UsageMetadata.PromptTokenCount - cachedTokens
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
+		usage["input_tokens"] = inputTokens
+		usage["output_tokens"] = geminiResp.UsageMetadata.CandidatesTokenCount
+		if cachedTokens > 0 {
+			usage["cache_read_input_tokens"] = cachedTokens
+		}
+	}
+	claudeResp["usage"] = usage
+
+	// Build content blocks
+	var content []map[string]interface{}
+	hasToolUse := false
+	toolCallCounter := 0
+
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+		for _, part := range candidate.Content.Parts {
+			// Handle thinking blocks
+			if part.Thought && part.Text != "" {
+				block := map[string]interface{}{
+					"type":     "thinking",
+					"thinking": part.Text,
+				}
+				if part.ThoughtSignature != "" {
+					block["signature"] = part.ThoughtSignature
+				}
+				content = append(content, block)
+				continue
+			}
+
+			// Handle text blocks
+			if part.Text != "" {
+				content = append(content, map[string]interface{}{
+					"type": "text",
+					"text": part.Text,
+				})
+			}
+
+			// Handle function calls
+			if part.FunctionCall != nil {
+				hasToolUse = true
+				toolCallCounter++
+				toolID := part.FunctionCall.ID
+				if toolID == "" {
+					toolID = fmt.Sprintf("%s-%d", part.FunctionCall.Name, toolCallCounter)
+				}
+				args := part.FunctionCall.Args
+				remapFunctionCallArgs(part.FunctionCall.Name, args)
+				content = append(content, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    toolID,
+					"name":  part.FunctionCall.Name,
+					"input": args,
+				})
+			}
+		}
+
+		// Set stop reason
+		switch candidate.FinishReason {
+		case "STOP":
+			if hasToolUse {
+				claudeResp["stop_reason"] = "tool_use"
+			} else {
+				claudeResp["stop_reason"] = "end_turn"
+			}
+		case "MAX_TOKENS":
+			claudeResp["stop_reason"] = "max_tokens"
+		}
+	}
+
+	claudeResp["content"] = content
+
+	return json.Marshal(claudeResp)
 }
