@@ -6,6 +6,11 @@
 # Binary
 maxx
 
+# Go build cache
+.gocache/
+.gomodcache/
+.gotmp/
+
 # Claude Code local settings
 .claude/settings.local.json
 

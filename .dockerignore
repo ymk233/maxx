@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+maxx
+*.db
+*.db-shm
+*.db-wal
+data.db
+
+# Go cache
+.gocache
+.gomodcache
+.gotmp
+
+# Frontend
+web/node_modules
+web/dist
+web/.vite
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Task runner
+.task
+
+# Documentation
+README.md
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Claude
+.claude
