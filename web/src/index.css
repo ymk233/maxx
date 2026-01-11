@@ -432,6 +432,11 @@ body {
   100% { background-position: 1rem 1rem; }
 }
 
+@keyframes snowing {
+  0% { background-position: 0 0; }
+  100% { background-position: 50px 100px; }
+}
+
 .animate-streaming-badge {
   animation: pulseSoft 1.5s ease-in-out infinite;
   display: inline-block;
@@ -459,6 +464,16 @@ body {
   );
   background-size: 1rem 1rem;
   animation: marquee 1s linear infinite;
+}
+
+.animate-snowing {
+  background-image:
+    radial-gradient(6px 6px at 20% 30%, rgba(34, 211, 238, 0.4) 50%, transparent 50%),
+    radial-gradient(8px 8px at 40% 70%, rgba(34, 211, 238, 0.3) 50%, transparent 50%),
+    radial-gradient(5px 5px at 60% 40%, rgba(34, 211, 238, 0.4) 50%, transparent 50%),
+    radial-gradient(7px 7px at 80% 80%, rgba(34, 211, 238, 0.3) 50%, transparent 50%);
+  background-size: 100px 100px;
+  animation: snowing 5s linear infinite;
 }
 
 /* Marquee effect for table rows - direct background animation */

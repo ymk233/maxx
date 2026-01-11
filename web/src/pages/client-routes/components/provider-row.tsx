@@ -256,21 +256,8 @@ export function ProviderRowContent({
         <>
           <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-transparent to-blue-600/5 pointer-events-none animate-pulse" />
           <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-400/20 to-transparent" />
-          {/* 雪花动画 */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {[...Array(6)].map((_, i) => (
-              <Snowflake
-                key={i}
-                size={12}
-                className="absolute -top-4 text-cyan-500/20 animate-snowfall"
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  animationDelay: `${Math.random() * 5}s`,
-                  animationDuration: `${5 + Math.random() * 5}s`,
-                }}
-              />
-            ))}
-          </div>
+          {/* 雪花动画 (CSS Background) */}
+          <div className="absolute inset-0 animate-snowing pointer-events-none opacity-60" />
         </>
       )}
 
