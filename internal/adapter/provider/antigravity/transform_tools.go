@@ -86,7 +86,7 @@ func isWebSearchTool(tool ClaudeTool) bool {
 
 	// Fallback: name-based detection (includes legacy "google_search")
 	switch strings.ToLower(tool.Name) {
-	case "web_search", "google_search", "google_search_retrieval":
+	case "web_search", "google_search":
 		return true
 	default:
 		return false

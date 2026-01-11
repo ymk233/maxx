@@ -38,6 +38,10 @@ type ClaudeStreamingState struct {
 	requestModel string // Original Claude model from request (for response)
 	modelVersion string // Gemini model version from upstream (for debugging)
 	responseID   string
+
+	// Grounding (web search) captured during streaming, emitted at finish (like Antigravity-Manager)
+	webSearchQuery  string
+	groundingChunks []GeminiGroundingChunk
 }
 
 // NewClaudeStreamingState creates a new streaming state
@@ -278,6 +282,28 @@ func (s *ClaudeStreamingState) emitFinish(finishReason string, usage *GeminiUsag
 		}))
 		s.blockIndex++
 		s.trailingSignature = nil
+	}
+
+	// Grounding (web search) -> emit as a separate Markdown text block at finish (like Antigravity-Manager)
+	if groundingText := s.buildGroundingMarkdown(); groundingText != "" {
+		chunks = append(chunks, s.emit("content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": s.blockIndex,
+			"content_block": map[string]interface{}{
+				"type": "text",
+				"text": "",
+			},
+		}))
+		chunks = append(chunks, s.emitDelta("text_delta", map[string]interface{}{"text": groundingText}))
+		chunks = append(chunks, s.emit("content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": s.blockIndex,
+		}))
+		s.blockIndex++
+
+		// Clear grounding so we don't emit twice
+		s.webSearchQuery = ""
+		s.groundingChunks = nil
 	}
 
 	// Determine stop reason
@@ -604,10 +630,7 @@ func (s *ClaudeStreamingState) ProcessGeminiSSELine(line string) []byte {
 
 		// Process grounding metadata (web search results) - like Antigravity-Manager
 		if candidate.GroundingMetadata != nil {
-			groundingChunks := s.processGrounding(candidate.GroundingMetadata)
-			for _, c := range groundingChunks {
-				output = append(output, c...)
-			}
+			s.captureGrounding(candidate.GroundingMetadata)
 		}
 
 		// Handle finish
@@ -648,36 +671,49 @@ func (s *ClaudeStreamingState) processPart(part *GeminiPart) [][]byte {
 	return nil
 }
 
-// processGrounding processes Grounding metadata (Web Search results) and emits as text
-// (like Antigravity-Manager's process_grounding)
-func (s *ClaudeStreamingState) processGrounding(grounding *GeminiGroundingMetadata) [][]byte {
+// captureGrounding stores grounding metadata during streaming, to be emitted at finish.
+func (s *ClaudeStreamingState) captureGrounding(grounding *GeminiGroundingMetadata) {
 	if grounding == nil {
-		return nil
+		return
+	}
+	if len(grounding.WebSearchQueries) > 0 {
+		s.webSearchQuery = grounding.WebSearchQueries[0]
+	}
+	if len(grounding.GroundingChunks) > 0 {
+		s.groundingChunks = grounding.GroundingChunks
+	}
+}
+
+// buildGroundingMarkdown builds grounding(web search) markdown text (same format as Antigravity-Manager).
+func (s *ClaudeStreamingState) buildGroundingMarkdown() string {
+	if s.webSearchQuery == "" && len(s.groundingChunks) == 0 {
+		return ""
 	}
 
 	var groundingText strings.Builder
 
-	// 1. Process search queries
-	if len(grounding.WebSearchQueries) > 0 {
+	// 1. Search query
+	if strings.TrimSpace(s.webSearchQuery) != "" {
 		groundingText.WriteString("\n\n---\n**🔍 已为您搜索：** ")
-		groundingText.WriteString(strings.Join(grounding.WebSearchQueries, ", "))
+		groundingText.WriteString(s.webSearchQuery)
 	}
 
-	// 2. Process grounding chunks (source links)
-	if len(grounding.GroundingChunks) > 0 {
-		var links []string
-		for i, chunk := range grounding.GroundingChunks {
-			if chunk.Web != nil {
-				title := chunk.Web.Title
-				if title == "" {
-					title = "网页来源"
-				}
-				uri := chunk.Web.URI
-				if uri == "" {
-					uri = "#"
-				}
-				links = append(links, fmt.Sprintf("[%d] [%s](%s)", i+1, title, uri))
+	// 2. Source links
+	if len(s.groundingChunks) > 0 {
+		links := make([]string, 0, len(s.groundingChunks))
+		for i, chunk := range s.groundingChunks {
+			if chunk.Web == nil {
+				continue
 			}
+			title := chunk.Web.Title
+			if title == "" {
+				title = "网页来源"
+			}
+			uri := chunk.Web.URI
+			if uri == "" {
+				uri = "#"
+			}
+			links = append(links, fmt.Sprintf("[%d] [%s](%s)", i+1, title, uri))
 		}
 
 		if len(links) > 0 {
@@ -686,12 +722,7 @@ func (s *ClaudeStreamingState) processGrounding(grounding *GeminiGroundingMetada
 		}
 	}
 
-	if groundingText.Len() == 0 {
-		return nil
-	}
-
-	// Emit as text content
-	return s.processText(groundingText.String(), "")
+	return groundingText.String()
 }
 
 // remapFunctionCallArgs remaps Gemini function call arguments to Claude Code expected format

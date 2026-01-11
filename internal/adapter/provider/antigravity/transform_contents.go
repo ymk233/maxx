@@ -63,11 +63,6 @@ func buildContents(
 					parts = append(parts, part)
 					toolIDToName[block.ID] = block.Name
 
-					// Cache tool signature (Layer 1 recovery)
-					if sig, ok := part["thoughtSignature"].(string); ok && signatureCache != nil {
-						signatureCache.CacheToolSignature(block.ID, sig)
-					}
-
 				case "tool_result":
 					part := processToolResultBlock(block, toolIDToName, lastThoughtSignature)
 					parts = append(parts, part)
@@ -85,6 +80,9 @@ func buildContents(
 		}
 
 		// Build content
+		if len(parts) == 0 {
+			continue
+		}
 		role := mapRole(msg.Role)
 		contents = append(contents, map[string]interface{}{
 			"role":  role,
@@ -194,14 +192,8 @@ func processToolUseBlock(
 		signature = GetThoughtSignature()
 	}
 
-	// Strict signature validation
-	// Reference: Antigravity-Manager's has_valid_signature_for_function_calls
-	if signature != "" && HasValidSignature(signature) {
+	if signature != "" {
 		part["thoughtSignature"] = signature
-	} else if signature != "" && len(signature) < MinSignatureLength {
-		// Log when signature is too short (防止 Gemini 拒绝)
-		log.Printf("[Antigravity] Tool call %s has invalid signature (len=%d < %d), not including",
-			block.ID, len(signature), MinSignatureLength)
 	}
 
 	return part

@@ -165,19 +165,10 @@ func IsModelCompatible(cached, target string) bool {
 	if strings.Contains(c, "gemini-2.0") && strings.Contains(t, "gemini-2.0") {
 		return true
 	}
-	if strings.Contains(c, "gemini-2.5") && strings.Contains(t, "gemini-2.5") {
-		return true
-	}
-	if strings.Contains(c, "gemini-3") && strings.Contains(t, "gemini-3") {
-		return true
-	}
 	if strings.Contains(c, "claude-3-5") && strings.Contains(t, "claude-3-5") {
 		return true
 	}
 	if strings.Contains(c, "claude-3-7") && strings.Contains(t, "claude-3-7") {
-		return true
-	}
-	if strings.Contains(c, "claude-4") && strings.Contains(t, "claude-4") {
 		return true
 	}
 

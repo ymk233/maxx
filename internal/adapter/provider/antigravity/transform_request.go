@@ -15,11 +15,13 @@ func TransformClaudeToGemini(
 	stream bool,
 	sessionID string,
 	signatureCache *SignatureCache,
-) (geminiReqBody []byte, err error) {
+) (geminiReqBody []byte, effectiveMappedModel string, hasThinking bool, err error) {
+	effectiveMappedModel = mappedModel
+
 	// 1. Parse Claude request
 	var claudeReq ClaudeRequest
 	if err := json.Unmarshal(claudeReqBody, &claudeReq); err != nil {
-		return nil, fmt.Errorf("failed to parse Claude request: %w", err)
+		return nil, effectiveMappedModel, false, fmt.Errorf("failed to parse Claude request: %w", err)
 	}
 
 	// 2. Cache Control cleanup (before conversion)
@@ -32,6 +34,7 @@ func TransformClaudeToGemini(
 		// Web Search only works reliably with gemini-2.5-flash
 		log.Printf("[Antigravity] Detected Web Search tool, forcing model to gemini-2.5-flash (was: %s)", mappedModel)
 		mappedModel = "gemini-2.5-flash"
+		effectiveMappedModel = mappedModel
 	}
 
 	// 4. Thinking block pre-filtering
@@ -45,7 +48,7 @@ func TransformClaudeToGemini(
 
 	// 7. Calculate final thinking mode state (before building request)
 	// Reference: Antigravity-Manager's thinking mode resolution (line 170-251)
-	hasThinking := calculateFinalThinkingState(&claudeReq, mappedModel, signatureCache)
+	hasThinking = calculateFinalThinkingState(&claudeReq, mappedModel, signatureCache)
 
 	// 8. Build Gemini request
 	geminiReq := make(map[string]interface{})
@@ -58,7 +61,7 @@ func TransformClaudeToGemini(
 	// 7.2 Message contents
 	contents, err := buildContents(claudeReq.Messages, mappedModel, sessionID, signatureCache)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build contents: %w", err)
+		return nil, effectiveMappedModel, hasThinking, fmt.Errorf("failed to build contents: %w", err)
 	}
 	geminiReq["contents"] = contents
 
@@ -82,7 +85,11 @@ func TransformClaudeToGemini(
 	deepCleanUndefined(geminiReq)
 
 	// 6. Serialize
-	return json.Marshal(geminiReq)
+	geminiReqBody, err = json.Marshal(geminiReq)
+	if err != nil {
+		return nil, effectiveMappedModel, hasThinking, err
+	}
+	return geminiReqBody, effectiveMappedModel, hasThinking, nil
 }
 
 // ClaudeRequest represents a Claude API request
@@ -431,7 +438,7 @@ func detectWebSearchTool(claudeReq *ClaudeRequest) bool {
 
 		// Fallback: name-based detection (includes legacy "google_search")
 		switch strings.ToLower(tool.Name) {
-		case "web_search", "google_search", "google_search_retrieval":
+		case "web_search", "google_search":
 			return true
 		}
 	}

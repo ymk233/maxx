@@ -118,29 +118,15 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 			// Use direct transformation (no converter dependency)
 			// This combines cache control cleanup, thinking filter, tool loop recovery,
 			// system instruction building, content transformation, tool building, and generation config
-			geminiBody, err = TransformClaudeToGemini(requestBody, mappedModel, actualStream, sessionID, GlobalSignatureCache())
+			var (
+				effectiveMappedModel string
+				hasThinking          bool
+			)
+			geminiBody, effectiveMappedModel, hasThinking, err = TransformClaudeToGemini(requestBody, mappedModel, actualStream, sessionID, GlobalSignatureCache())
 			if err != nil {
 				return domain.NewProxyErrorWithMessage(err, true, fmt.Sprintf("failed to transform Claude request: %v", err))
 			}
-
-			// Apply additional post-processing for advanced features
-			// (interleaved hint, toolConfig, signature validation)
-			hasThinking := HasThinkingEnabledWithModel(requestBody, mappedModel)
-			if hasThinking && !TargetModelSupportsThinking(mappedModel) {
-				hasThinking = false
-			}
-
-			// Check if thinking should be disabled due to history
-			if hasThinking {
-				var req map[string]interface{}
-				if err := json.Unmarshal(geminiBody, &req); err == nil {
-					if contents, ok := req["contents"].([]interface{}); ok {
-						if ShouldDisableThinkingDueToHistory(contents) {
-							hasThinking = false
-						}
-					}
-				}
-			}
+			mappedModel = effectiveMappedModel
 
 			// Apply minimal post-processing for features not yet fully integrated
 			geminiBody = applyClaudePostProcess(geminiBody, sessionID, hasThinking, requestBody, mappedModel)
