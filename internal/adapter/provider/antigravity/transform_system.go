@@ -13,7 +13,7 @@ func buildSystemInstruction(claudeReq *ClaudeRequest, modelName string) map[stri
 	userHasAntigravity := false
 	if claudeReq.System != nil {
 		systemText := extractSystemText(claudeReq.System)
-		if strings.Contains(strings.ToLower(systemText), "antigravity") {
+		if strings.Contains(systemText, "You are Antigravity") {
 			userHasAntigravity = true
 		}
 	}

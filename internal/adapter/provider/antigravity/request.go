@@ -10,7 +10,7 @@ import (
 
 // RequestConfig holds resolved request configuration (like Antigravity-Manager)
 type RequestConfig struct {
-	RequestType        string                 // "agent", "web_search", or "image_gen"
+	RequestType        string // "agent", "web_search", or "image_gen"
 	FinalModel         string
 	InjectGoogleSearch bool
 	ImageConfig        map[string]interface{} // Image generation config (if request_type is image_gen)
@@ -63,7 +63,7 @@ func unwrapGeminiCLIEnvelope(body []byte) []byte {
 
 // resolveRequestConfig determines request type and final model name
 // (like Antigravity-Manager's resolve_request_config)
-func resolveRequestConfig(originalModel, mappedModel string, innerRequest map[string]interface{}) RequestConfig {
+func resolveRequestConfig(originalModel, mappedModel string, tools []interface{}) RequestConfig {
 	// 1. Image Generation Check (Priority)
 	if strings.HasPrefix(mappedModel, "gemini-3-pro-image") {
 		imageConfig, cleanModel := ParseImageConfig(originalModel)
@@ -78,7 +78,7 @@ func resolveRequestConfig(originalModel, mappedModel string, innerRequest map[st
 	isOnlineSuffix := strings.HasSuffix(originalModel, "-online")
 
 	// Check for networking tools in the request
-	hasNetworkingTool := detectsNetworkingTool(innerRequest)
+	hasNetworkingTool := detectsNetworkingTool(tools)
 
 	// Strip -online suffix from final model
 	finalModel := strings.TrimSuffix(mappedModel, "-online")
@@ -103,10 +103,10 @@ func resolveRequestConfig(originalModel, mappedModel string, innerRequest map[st
 	}
 }
 
-// detectsNetworkingTool checks if request contains networking/web search tools
-func detectsNetworkingTool(innerRequest map[string]interface{}) bool {
-	tools, ok := innerRequest["tools"].([]interface{})
-	if !ok {
+// detectsNetworkingTool checks if tool list contains networking/web search tools.
+// Mirrors Antigravity-Manager's `detects_networking_tool`.
+func detectsNetworkingTool(tools []interface{}) bool {
+	if len(tools) == 0 {
 		return false
 	}
 
@@ -116,24 +116,52 @@ func detectsNetworkingTool(innerRequest map[string]interface{}) bool {
 			continue
 		}
 
-		// Check googleSearch or googleSearchRetrieval
+		// 1) Direct style: { "name": "..." } or { "type": "..." }
+		if name, _ := toolMap["name"].(string); name != "" {
+			switch name {
+			case "web_search", "google_search", "web_search_20250305", "google_search_retrieval":
+				return true
+			}
+		}
+		if t, _ := toolMap["type"].(string); t != "" {
+			switch t {
+			case "web_search", "google_search", "web_search_20250305", "google_search_retrieval":
+				return true
+			}
+		}
+
+		// 2) OpenAI nested style: { "type": "function", "function": { "name": "..." } }
+		if fn, ok := toolMap["function"].(map[string]interface{}); ok {
+			if fnName, _ := fn["name"].(string); fnName != "" {
+				switch fnName {
+				case "web_search", "google_search", "web_search_20250305", "google_search_retrieval":
+					return true
+				}
+			}
+		}
+
+		// 3) Gemini tool declarations: { "functionDeclarations": [ { "name": "..." } ] }
+		if decls, ok := toolMap["functionDeclarations"].([]interface{}); ok {
+			for _, decl := range decls {
+				declMap, ok := decl.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if name, _ := declMap["name"].(string); name != "" {
+					switch name {
+					case "web_search", "google_search", "google_search_retrieval":
+						return true
+					}
+				}
+			}
+		}
+
+		// 4) Gemini googleSearch declarations
 		if _, ok := toolMap["googleSearch"]; ok {
 			return true
 		}
 		if _, ok := toolMap["googleSearchRetrieval"]; ok {
 			return true
-		}
-
-		// Check functionDeclarations
-		if decls, ok := toolMap["functionDeclarations"].([]interface{}); ok {
-			for _, decl := range decls {
-				if declMap, ok := decl.(map[string]interface{}); ok {
-					name, _ := declMap["name"].(string)
-					if name == "web_search" || name == "google_search" || name == "google_search_retrieval" {
-						return true
-					}
-				}
-			}
 		}
 	}
 
@@ -142,7 +170,7 @@ func detectsNetworkingTool(innerRequest map[string]interface{}) bool {
 
 // wrapV1InternalRequest wraps the request body in v1internal format
 // Similar to Antigravity-Manager's wrap_request function
-func wrapV1InternalRequest(body []byte, projectID, originalModel, mappedModel, sessionID string) ([]byte, error) {
+func wrapV1InternalRequest(body []byte, projectID, originalModel, mappedModel, sessionID string, toolsForConfig []interface{}) ([]byte, error) {
 	var innerRequest map[string]interface{}
 	if err := json.Unmarshal(body, &innerRequest); err != nil {
 		return nil, err
@@ -152,7 +180,13 @@ func wrapV1InternalRequest(body []byte, projectID, originalModel, mappedModel, s
 	delete(innerRequest, "model")
 
 	// Resolve request configuration (like Antigravity-Manager)
-	config := resolveRequestConfig(originalModel, mappedModel, innerRequest)
+	toolsForDetection := toolsForConfig
+	if toolsForDetection == nil {
+		if tools, ok := innerRequest["tools"].([]interface{}); ok {
+			toolsForDetection = tools
+		}
+	}
+	config := resolveRequestConfig(originalModel, mappedModel, toolsForDetection)
 
 	// Inject googleSearch if needed and no function declarations present
 	if config.InjectGoogleSearch {

@@ -103,10 +103,10 @@ func flattenHeaders(h http.Header) map[string]string {
 func isRetryableStatusCode(code int) bool {
 	switch code {
 	case http.StatusTooManyRequests, // 429
-		http.StatusInternalServerError,    // 500
-		http.StatusBadGateway,             // 502
-		http.StatusServiceUnavailable,     // 503
-		http.StatusGatewayTimeout:         // 504
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout:      // 504
 		return true
 	default:
 		return false
@@ -139,31 +139,185 @@ func convertGeminiToClaudeResponse(geminiBody []byte, requestModel string) ([]by
 		return nil, err
 	}
 
-	// [Aligned with Antigravity-Manager] Use upstream modelVersion for transparency
-	modelName := geminiResp.ModelVersion
-	if modelName == "" {
-		modelName = requestModel // Fallback to request model if upstream doesn't provide version
+	_ = requestModel // Manager does not fall back to request model here
+
+	// Non-streaming conversion (mirrors Antigravity-Manager's NonStreamingProcessor)
+	contentBlocks := make([]map[string]interface{}, 0, 8)
+	var textBuilder strings.Builder
+	var thinkingBuilder strings.Builder
+	thinkingSignature := ""
+	trailingSignature := ""
+	hasToolUse := false
+
+	flushText := func() {
+		if textBuilder.Len() == 0 {
+			return
+		}
+		contentBlocks = append(contentBlocks, map[string]interface{}{
+			"type": "text",
+			"text": textBuilder.String(),
+		})
+		textBuilder.Reset()
 	}
 
-	// Build Claude response
-	claudeResp := map[string]interface{}{
-		"id":            geminiResp.ResponseID,
-		"type":          "message",
-		"role":          "assistant",
-		"model":         modelName, // Use upstream model version (like Antigravity-Manager)
-		"stop_reason":   "end_turn",
-		"stop_sequence": nil,
+	flushThinking := func() {
+		if thinkingBuilder.Len() == 0 && thinkingSignature == "" {
+			return
+		}
+		block := map[string]interface{}{
+			"type":     "thinking",
+			"thinking": thinkingBuilder.String(),
+		}
+		if thinkingSignature != "" {
+			block["signature"] = thinkingSignature
+		}
+		contentBlocks = append(contentBlocks, block)
+		thinkingBuilder.Reset()
+		thinkingSignature = ""
 	}
 
-	if claudeResp["id"] == "" {
-		claudeResp["id"] = fmt.Sprintf("msg_%d", generateRandomID())
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+
+		for _, part := range candidate.Content.Parts {
+			signature := part.ThoughtSignature
+
+			// 1) Function calls
+			if part.FunctionCall != nil {
+				flushThinking()
+				flushText()
+
+				// Trailing signature: emit an empty thinking block before tool_use
+				if trailingSignature != "" {
+					contentBlocks = append(contentBlocks, map[string]interface{}{
+						"type":      "thinking",
+						"thinking":  "",
+						"signature": trailingSignature,
+					})
+					trailingSignature = ""
+				}
+
+				hasToolUse = true
+
+				toolID := part.FunctionCall.ID
+				if toolID == "" {
+					toolID = fmt.Sprintf("%s-%d", part.FunctionCall.Name, generateRandomID())
+				}
+
+				args := part.FunctionCall.Args
+				remapFunctionCallArgs(part.FunctionCall.Name, args)
+
+				toolUse := map[string]interface{}{
+					"type":  "tool_use",
+					"id":    toolID,
+					"name":  part.FunctionCall.Name,
+					"input": args,
+				}
+				if signature != "" {
+					toolUse["signature"] = signature
+				}
+				contentBlocks = append(contentBlocks, toolUse)
+				continue
+			}
+
+			// 2) Text / Thinking
+			if part.Text != "" || signature != "" || part.Thought {
+				if part.Thought {
+					// Thinking part
+					flushText()
+
+					if trailingSignature != "" {
+						flushThinking()
+						contentBlocks = append(contentBlocks, map[string]interface{}{
+							"type":      "thinking",
+							"thinking":  "",
+							"signature": trailingSignature,
+						})
+						trailingSignature = ""
+					}
+
+					thinkingBuilder.WriteString(part.Text)
+					if signature != "" {
+						thinkingSignature = signature
+					}
+				} else {
+					// Normal text part
+					if part.Text == "" {
+						// Empty text with signature -> trailing signature
+						if signature != "" {
+							trailingSignature = signature
+						}
+						continue
+					}
+
+					flushThinking()
+
+					if trailingSignature != "" {
+						flushText()
+						contentBlocks = append(contentBlocks, map[string]interface{}{
+							"type":      "thinking",
+							"thinking":  "",
+							"signature": trailingSignature,
+						})
+						trailingSignature = ""
+					}
+
+					textBuilder.WriteString(part.Text)
+					if signature != "" {
+						flushText()
+						contentBlocks = append(contentBlocks, map[string]interface{}{
+							"type":      "thinking",
+							"thinking":  "",
+							"signature": signature,
+						})
+					}
+				}
+			}
+
+			// 3) Inline data (images)
+			if part.InlineData != nil && part.InlineData.Data != "" {
+				flushThinking()
+				markdownImg := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
+				textBuilder.WriteString(markdownImg)
+				flushText()
+			}
+		}
+
+		// Grounding (web search)
+		if candidate.GroundingMetadata != nil {
+			if groundingText := buildGroundingText(candidate.GroundingMetadata); groundingText != "" {
+				flushThinking()
+				flushText()
+				textBuilder.WriteString(groundingText)
+				flushText()
+			}
+		}
+
+		flushThinking()
+		flushText()
+
+		// Trailing signature at end of response
+		if trailingSignature != "" {
+			contentBlocks = append(contentBlocks, map[string]interface{}{
+				"type":      "thinking",
+				"thinking":  "",
+				"signature": trailingSignature,
+			})
+			trailingSignature = ""
+		}
 	}
 
-	// Build usage (like Antigravity-Manager's to_claude_usage)
+	stopReason := "end_turn"
+	if hasToolUse {
+		stopReason = "tool_use"
+	} else if len(geminiResp.Candidates) > 0 && geminiResp.Candidates[0].FinishReason == "MAX_TOKENS" {
+		stopReason = "max_tokens"
+	}
+
+	// Usage (like Antigravity-Manager's to_claude_usage)
 	usage := map[string]interface{}{
-		"input_tokens":                0,
-		"output_tokens":               0,
-		"cache_creation_input_tokens": 0,
+		"input_tokens":  0,
+		"output_tokens": 0,
 	}
 	if geminiResp.UsageMetadata != nil {
 		cachedTokens := geminiResp.UsageMetadata.CachedContentTokenCount
@@ -176,108 +330,23 @@ func convertGeminiToClaudeResponse(geminiBody []byte, requestModel string) ([]by
 		if cachedTokens > 0 {
 			usage["cache_read_input_tokens"] = cachedTokens
 		}
-	}
-	claudeResp["usage"] = usage
-
-	// Build content blocks
-	var content []map[string]interface{}
-	hasToolUse := false
-	toolCallCounter := 0
-	var trailingSignature string
-
-	if len(geminiResp.Candidates) > 0 {
-		candidate := geminiResp.Candidates[0]
-		for _, part := range candidate.Content.Parts {
-			// Handle thinking blocks (including trailing signature case)
-			if part.Thought || part.ThoughtSignature != "" {
-				thinkingText := part.Text
-				block := map[string]interface{}{
-					"type":     "thinking",
-					"thinking": thinkingText,
-				}
-				if part.ThoughtSignature != "" {
-					block["signature"] = part.ThoughtSignature
-				}
-				content = append(content, block)
-				trailingSignature = "" // reset trailing signature once consumed
-				continue
-			}
-
-			// Handle function calls
-			if part.FunctionCall != nil {
-				hasToolUse = true
-				toolCallCounter++
-				toolID := part.FunctionCall.ID
-				if toolID == "" {
-					toolID = fmt.Sprintf("%s-%d", part.FunctionCall.Name, toolCallCounter)
-				}
-				args := part.FunctionCall.Args
-				remapFunctionCallArgs(part.FunctionCall.Name, args)
-				toolUse := map[string]interface{}{
-					"type":  "tool_use",
-					"id":    toolID,
-					"name":  part.FunctionCall.Name,
-					"input": args,
-				}
-				if part.ThoughtSignature != "" {
-					toolUse["signature"] = part.ThoughtSignature
-				} else if trailingSignature != "" {
-					toolUse["signature"] = trailingSignature
-				}
-				content = append(content, toolUse)
-				trailingSignature = ""
-				continue
-			}
-
-			// Handle inline data (images)
-			if part.InlineData != nil && part.InlineData.Data != "" {
-				markdownImg := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
-				content = append(content, map[string]interface{}{
-					"type": "text",
-					"text": markdownImg,
-				})
-				continue
-			}
-
-			// Handle text blocks (capture trailing signature if empty)
-			if part.Text != "" {
-				content = append(content, map[string]interface{}{
-					"type": "text",
-					"text": part.Text,
-				})
-				continue
-			}
-
-			// Empty text with signature (store for next block)
-			if part.Text == "" && part.ThoughtSignature != "" {
-				trailingSignature = part.ThoughtSignature
-			}
-		}
-
-		// Append grounding metadata as a text block (like Antigravity-Manager)
-		if candidate.GroundingMetadata != nil {
-			if groundingText := buildGroundingText(candidate.GroundingMetadata); groundingText != "" {
-				content = append(content, map[string]interface{}{
-					"type": "text",
-					"text": groundingText,
-				})
-			}
-		}
-
-		// Set stop reason
-		switch candidate.FinishReason {
-		case "STOP":
-			if hasToolUse {
-				claudeResp["stop_reason"] = "tool_use"
-			} else {
-				claudeResp["stop_reason"] = "end_turn"
-			}
-		case "MAX_TOKENS":
-			claudeResp["stop_reason"] = "max_tokens"
-		}
+		usage["cache_creation_input_tokens"] = 0
 	}
 
-	claudeResp["content"] = content
+	respID := geminiResp.ResponseID
+	if respID == "" {
+		respID = fmt.Sprintf("msg_%d", generateRandomID())
+	}
+
+	claudeResp := map[string]interface{}{
+		"id":          respID,
+		"type":        "message",
+		"role":        "assistant",
+		"model":       geminiResp.ModelVersion,
+		"content":     contentBlocks,
+		"stop_reason": stopReason,
+		"usage":       usage,
+	}
 
 	return json.Marshal(claudeResp)
 }

@@ -112,7 +112,7 @@ type ContentBlock struct {
 	Type         string                 `json:"type"` // "text", "thinking", "redacted_thinking", "tool_use", "tool_result", "image", "document"
 	Text         string                 `json:"text,omitempty"`
 	Thinking     string                 `json:"thinking,omitempty"`
-	Data         string                 `json:"data,omitempty"`         // for redacted_thinking
+	Data         string                 `json:"data,omitempty"` // for redacted_thinking
 	Signature    string                 `json:"signature,omitempty"`
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name,omitempty"`
@@ -126,6 +126,7 @@ type ContentBlock struct {
 
 // ClaudeTool represents a tool definition in Claude format
 type ClaudeTool struct {
+	Type         string                 `json:"type,omitempty"` // server tools like "web_search_20250305"
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description,omitempty"`
 	InputSchema  map[string]interface{} `json:"input_schema"`
@@ -292,6 +293,25 @@ func closeToolLoopForThinking(messages *[]ClaudeMessage) {
 		return
 	}
 
+	// Only recover when we are in a tool loop:
+	// the last message is a user ToolResult, but the preceding assistant message has no Thinking block.
+	lastMsg := (*messages)[len(*messages)-1]
+	if lastMsg.Role != "user" {
+		return
+	}
+
+	lastBlocks := parseContentBlocks(lastMsg.Content)
+	inToolLoop := false
+	for _, block := range lastBlocks {
+		if block.Type == "tool_result" {
+			inToolLoop = true
+			break
+		}
+	}
+	if !inToolLoop {
+		return
+	}
+
 	// Find last assistant message
 	lastAssistantIdx := -1
 	for i := len(*messages) - 1; i >= 0; i-- {
@@ -305,21 +325,18 @@ func closeToolLoopForThinking(messages *[]ClaudeMessage) {
 		return
 	}
 
-	// Check if it has ToolUse but no Thinking
+	// Check if it has a Thinking block
 	blocks := parseContentBlocks((*messages)[lastAssistantIdx].Content)
-	hasToolUse := false
 	hasThinking := false
 
 	for _, block := range blocks {
-		if block.Type == "tool_use" {
-			hasToolUse = true
-		}
 		if block.Type == "thinking" {
 			hasThinking = true
+			break
 		}
 	}
 
-	if hasToolUse && !hasThinking {
+	if !hasThinking {
 		log.Println("[Antigravity] Detected broken tool loop, injecting synthetic messages")
 
 		// Inject synthetic assistant message
@@ -407,22 +424,14 @@ func detectWebSearchTool(claudeReq *ClaudeRequest) bool {
 	}
 
 	for _, tool := range claudeReq.Tools {
-		// Check by name
-		nameLower := strings.ToLower(tool.Name)
-		if nameLower == "web_search" ||
-			nameLower == "websearch" ||
-			nameLower == "google_search" ||
-			nameLower == "googlesearch" ||
-			nameLower == "googlesearchretrieval" ||
-			nameLower == "web_search_20250305" {
+		// Server tools: type starts with "web_search" (preferred)
+		if strings.HasPrefix(strings.ToLower(tool.Type), "web_search") {
 			return true
 		}
 
-		// Check description for web search keywords
-		descLower := strings.ToLower(tool.Description)
-		if strings.Contains(descLower, "web search") ||
-			strings.Contains(descLower, "google search") ||
-			strings.Contains(descLower, "internet search") {
+		// Fallback: name-based detection (includes legacy "google_search")
+		switch strings.ToLower(tool.Name) {
+		case "web_search", "google_search", "google_search_retrieval":
 			return true
 		}
 	}
@@ -463,10 +472,7 @@ func calculateFinalThinkingState(claudeReq *ClaudeRequest, mappedModel string, s
 	// Reference: Antigravity-Manager's signature validation (line 204-251)
 	// This prevents Gemini 3 Pro from rejecting requests due to missing thought_signature
 	if thinkingRequested {
-		globalSig := ""
-		if signatureCache != nil {
-			globalSig = signatureCache.GetGlobalSignature()
-		}
+		globalSig := GetThoughtSignature()
 
 		// Check if there are thinking blocks in history
 		hasThinkingHistory := hasThinkingInMessages(claudeReq.Messages)
@@ -480,12 +486,12 @@ func calculateFinalThinkingState(claudeReq *ClaudeRequest, mappedModel string, s
 		needsSignatureCheck := hasFunctionCalls
 
 		if !hasThinkingHistory && thinkingRequested {
-			log.Printf("[Antigravity] First thinking request detected. Using permissive mode - "+
+			log.Printf("[Antigravity] First thinking request detected. Using permissive mode - " +
 				"signature validation will be handled by upstream API.")
 		}
 
 		if needsSignatureCheck && !hasValidSignatureForFunctionCalls(claudeReq.Messages, globalSig) {
-			log.Printf("[Antigravity] [FIX #295] No valid signature found for function calls. "+
+			log.Printf("[Antigravity] [FIX #295] No valid signature found for function calls. " +
 				"Disabling thinking to prevent Gemini 3 Pro rejection.")
 			return false
 		}

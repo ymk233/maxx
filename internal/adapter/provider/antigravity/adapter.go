@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,40 +74,40 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 	// We'll attempt at most twice: original + retry without thinking on signature errors
 	retriedWithoutThinking := false
 
-		for attemptIdx := 0; attemptIdx < 2; attemptIdx++ {
-			ctx = ctxutil.WithRequestModel(baseCtx, requestModel)
-			ctx = ctxutil.WithRequestBody(ctx, requestBody)
+	for attemptIdx := 0; attemptIdx < 2; attemptIdx++ {
+		ctx = ctxutil.WithRequestModel(baseCtx, requestModel)
+		ctx = ctxutil.WithRequestBody(ctx, requestBody)
 
-			// Only map if route didn't provide a mapping (mappedModel empty or same as request)
-			config := provider.Config.Antigravity
-			if mappedModel == "" || mappedModel == requestModel {
-				// Route didn't provide mapping, use our internal mapping with haikuTarget config
-				haikuTarget := ""
-				if config != nil {
-					haikuTarget = config.HaikuTarget
-				}
-				mappedModel = MapClaudeModelToGeminiWithConfig(requestModel, haikuTarget)
+		// Only map if route didn't provide a mapping (mappedModel empty or same as request)
+		config := provider.Config.Antigravity
+		if mappedModel == "" || mappedModel == requestModel {
+			// Route didn't provide mapping, use our internal mapping with haikuTarget config
+			haikuTarget := ""
+			if config != nil {
+				haikuTarget = config.HaikuTarget
 			}
-			if backgroundDowngrade && backgroundModel != "" {
-				mappedModel = backgroundModel
-			}
-			// If route provided a different mappedModel, trust it and don't re-map
-			// (user/route has explicitly configured the target model)
+			mappedModel = MapClaudeModelToGeminiWithConfig(requestModel, haikuTarget)
+		}
+		if backgroundDowngrade && backgroundModel != "" {
+			mappedModel = backgroundModel
+		}
+		// If route provided a different mappedModel, trust it and don't re-map
+		// (user/route has explicitly configured the target model)
 
-			// Get streaming flag from context (already detected correctly for Gemini URL path)
-			stream := ctxutil.GetIsStream(ctx)
-			clientWantsStream := stream
-			actualStream := stream
-			if clientType == domain.ClientTypeClaude && !clientWantsStream {
-				// Auto-convert Claude non-stream to stream internally for better quota (like Manager)
-				actualStream = true
-			}
+		// Get streaming flag from context (already detected correctly for Gemini URL path)
+		stream := ctxutil.GetIsStream(ctx)
+		clientWantsStream := stream
+		actualStream := stream
+		if clientType == domain.ClientTypeClaude && !clientWantsStream {
+			// Auto-convert Claude non-stream to stream internally for better quota (like Manager)
+			actualStream = true
+		}
 
-			// Get access token
-			accessToken, err := a.getAccessToken(ctx)
-			if err != nil {
-				return domain.NewProxyErrorWithMessage(err, true, "failed to get access token")
-			}
+		// Get access token
+		accessToken, err := a.getAccessToken(ctx)
+		if err != nil {
+			return domain.NewProxyErrorWithMessage(err, true, "failed to get access token")
+		}
 
 		// [SessionID Support] Extract metadata.user_id from original request for sessionId (like Antigravity-Manager)
 		sessionID := extractSessionID(requestBody)
@@ -152,7 +153,16 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 		}
 
 		// Wrap request in v1internal format
-		upstreamBody, err := wrapV1InternalRequest(geminiBody, config.ProjectID, requestModel, mappedModel, sessionID)
+		var toolsForConfig []interface{}
+		if clientType == domain.ClientTypeClaude {
+			var raw map[string]interface{}
+			if err := json.Unmarshal(requestBody, &raw); err == nil {
+				if tools, ok := raw["tools"].([]interface{}); ok {
+					toolsForConfig = tools
+				}
+			}
+		}
+		upstreamBody, err := wrapV1InternalRequest(geminiBody, config.ProjectID, requestModel, mappedModel, sessionID, toolsForConfig)
 		if err != nil {
 			return domain.NewProxyErrorWithMessage(domain.ErrFormatConversion, true, "failed to wrap request for v1internal")
 		}
@@ -246,8 +256,29 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 
 				// Parse retry info for 429/5xx responses (like Antigravity-Manager)
 				var retryAfter time.Duration
-				if retryInfo := ParseRetryInfo(resp.StatusCode, body); retryInfo != nil {
-					retryAfter = ApplyJitter(retryInfo.Delay)
+
+				// 1) Prefer Retry-After header (seconds)
+				if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+					if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+						retryAfter = time.Duration(secs) * time.Second
+					}
+				}
+
+				// 2) Fallback to body parsing (google.rpc.RetryInfo / quotaResetDelay)
+				if retryAfter == 0 {
+					if retryInfo := ParseRetryInfo(resp.StatusCode, body); retryInfo != nil {
+						retryAfter = retryInfo.Delay
+
+						// Manager: add a small buffer and cap for 429 retries
+						if resp.StatusCode == http.StatusTooManyRequests {
+							retryAfter += 200 * time.Millisecond
+							if retryAfter > 10*time.Second {
+								retryAfter = 10 * time.Second
+							}
+						}
+
+						retryAfter = ApplyJitter(retryAfter)
+					}
 				}
 
 				proxyErr := domain.NewProxyErrorWithMessage(
@@ -266,6 +297,14 @@ func (a *AntigravityAdapter) Execute(ctx context.Context, w http.ResponseWriter,
 				// Signature failure recovery: retry once without thinking (like Manager)
 				if resp.StatusCode == http.StatusBadRequest && !retriedWithoutThinking && isThinkingSignatureError(body) {
 					retriedWithoutThinking = true
+
+					// Manager uses a small fixed delay before retrying.
+					select {
+					case <-ctx.Done():
+						return domain.NewProxyErrorWithMessage(ctx.Err(), false, "client disconnected")
+					case <-time.After(200 * time.Millisecond):
+					}
+
 					requestBody = stripThinkingFromClaude(requestBody)
 					if newModel := extractModelFromBody(requestBody); newModel != "" {
 						requestModel = newModel
@@ -371,7 +410,7 @@ func refreshGoogleToken(ctx context.Context, refreshToken string) (string, int, 
 
 // applyClaudePostProcess applies minimal post-processing for advanced features
 // not yet fully integrated into the transform functions
-func applyClaudePostProcess(geminiBody []byte, sessionID string, hasThinking bool, claudeRequest []byte, mappedModel string) []byte {
+func applyClaudePostProcess(geminiBody []byte, sessionID string, hasThinking bool, _ []byte, mappedModel string) []byte {
 	var request map[string]interface{}
 	if err := json.Unmarshal(geminiBody, &request); err != nil {
 		return geminiBody
@@ -379,27 +418,19 @@ func applyClaudePostProcess(geminiBody []byte, sessionID string, hasThinking boo
 
 	modified := false
 
-	// 1. Inject interleaved thinking hint when tools + thinking enabled
-	hasTools := hasToolDeclarations(request)
-	if hasThinking && hasTools {
-		if injectInterleavedHint(request) {
-			modified = true
-		}
-	}
-
-	// 2. Inject toolConfig with VALIDATED mode when tools exist
+	// 1. Inject toolConfig with VALIDATED mode when tools exist
 	if InjectToolConfig(request) {
 		modified = true
 	}
 
-	// 3. Process contents for additional signature validation
+	// 2. Process contents for additional signature validation
 	if contents, ok := request["contents"].([]interface{}); ok {
 		if processContentsForSignatures(contents, sessionID, mappedModel) {
 			modified = true
 		}
 	}
 
-	// 4. Clean thinking fields if disabled
+	// 3. Clean thinking fields if disabled
 	if !hasThinking {
 		CleanThinkingFieldsRecursive(request)
 		modified = true
@@ -419,7 +450,7 @@ func applyClaudePostProcess(geminiBody []byte, sessionID string, hasThinking boo
 // v1internal endpoints (prod + daily fallback, like Antigravity-Manager)
 const (
 	V1InternalBaseURLProd  = "https://cloudcode-pa.googleapis.com/v1internal"
-	V1InternalBaseURLDaily = "https://daily-cloudcode-pa.googleapis.com/v1internal"
+	V1InternalBaseURLDaily = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal"
 )
 
 func (a *AntigravityAdapter) buildUpstreamURL(base string, stream bool) string {

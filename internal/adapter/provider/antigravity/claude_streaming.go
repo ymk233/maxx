@@ -29,10 +29,6 @@ type ClaudeStreamingState struct {
 	pendingSignature  *string
 	trailingSignature *string
 
-	// Signature caching support (like CLIProxyAPI)
-	sessionID           string
-	currentThinkingText strings.Builder
-
 	// Token usage tracking
 	inputTokens     int
 	outputTokens    int
@@ -53,18 +49,12 @@ func NewClaudeStreamingState() *ClaudeStreamingState {
 }
 
 // NewClaudeStreamingStateWithSession creates a new streaming state with session ID and request model
-func NewClaudeStreamingStateWithSession(sessionID, requestModel string) *ClaudeStreamingState {
+func NewClaudeStreamingStateWithSession(_ string, requestModel string) *ClaudeStreamingState {
 	return &ClaudeStreamingState{
 		blockType:    BlockTypeNone,
 		blockIndex:   0,
-		sessionID:    sessionID,
 		requestModel: requestModel,
 	}
-}
-
-// SetSessionID sets the session ID for signature caching
-func (s *ClaudeStreamingState) SetSessionID(sessionID string) {
-	s.sessionID = sessionID
 }
 
 // GeminiPart represents a part in Gemini response
@@ -102,7 +92,7 @@ type GeminiStreamChunk struct {
 		Content struct {
 			Parts []GeminiPart `json:"parts"`
 		} `json:"content"`
-		FinishReason      string                  `json:"finishReason,omitempty"`
+		FinishReason      string                   `json:"finishReason,omitempty"`
 		GroundingMetadata *GeminiGroundingMetadata `json:"groundingMetadata,omitempty"`
 	} `json:"candidates"`
 	UsageMetadata *GeminiUsageMetadata `json:"usageMetadata,omitempty"`
@@ -112,9 +102,9 @@ type GeminiStreamChunk struct {
 
 // GeminiGroundingMetadata represents grounding/web search metadata from Gemini
 type GeminiGroundingMetadata struct {
-	WebSearchQueries  []string               `json:"webSearchQueries,omitempty"`
-	GroundingChunks   []GeminiGroundingChunk `json:"groundingChunks,omitempty"`
-	SearchEntryPoint  *GeminiSearchEntryPoint `json:"searchEntryPoint,omitempty"`
+	WebSearchQueries []string                `json:"webSearchQueries,omitempty"`
+	GroundingChunks  []GeminiGroundingChunk  `json:"groundingChunks,omitempty"`
+	SearchEntryPoint *GeminiSearchEntryPoint `json:"searchEntryPoint,omitempty"`
 }
 
 // GeminiGroundingChunk represents a grounding chunk (web search result)
@@ -169,7 +159,7 @@ func (s *ClaudeStreamingState) emitMessageStart(chunk *GeminiStreamChunk) []byte
 
 	responseID := chunk.ResponseID
 	if responseID == "" {
-		responseID = fmt.Sprintf("msg_%d", generateRandomID())
+		responseID = "msg_unknown"
 	}
 	s.responseID = responseID
 
@@ -177,43 +167,33 @@ func (s *ClaudeStreamingState) emitMessageStart(chunk *GeminiStreamChunk) []byte
 		s.modelVersion = chunk.ModelVersion
 	}
 
-	// Build usage with all fields (like Antigravity-Manager's to_claude_usage)
-	usage := map[string]interface{}{
-		"input_tokens":  0,
-		"output_tokens": 0,
-	}
-	if chunk.UsageMetadata != nil {
-		// input_tokens should exclude cached tokens (like Antigravity-Manager)
-		cachedTokens := chunk.UsageMetadata.CachedContentTokenCount
-		inputTokens := chunk.UsageMetadata.PromptTokenCount - cachedTokens
-		if inputTokens < 0 {
-			inputTokens = 0
-		}
-		usage["input_tokens"] = inputTokens
-		usage["output_tokens"] = chunk.UsageMetadata.CandidatesTokenCount
-		if cachedTokens > 0 {
-			usage["cache_read_input_tokens"] = cachedTokens
-		}
-		// cache_creation_input_tokens: Gemini doesn't provide this, set to 0 (like Antigravity-Manager)
-		usage["cache_creation_input_tokens"] = 0
-	}
-
-	// [Aligned with Antigravity-Manager] Use upstream modelVersion for transparency
-	// This shows the actual model that processed the request (Gemini model)
-	modelName := s.modelVersion
-	if modelName == "" {
-		modelName = s.requestModel // Fallback to request model if upstream doesn't provide version
-	}
-
 	message := map[string]interface{}{
 		"id":            s.responseID,
 		"type":          "message",
 		"role":          "assistant",
 		"content":       []interface{}{},
-		"model":         modelName, // Use upstream model version (like Antigravity-Manager)
+		"model":         s.modelVersion, // Use upstream model version (like Antigravity-Manager)
 		"stop_reason":   nil,
 		"stop_sequence": nil,
-		"usage":         usage,
+	}
+
+	// Usage is only present when upstream provides usageMetadata (like Antigravity-Manager)
+	if chunk.UsageMetadata != nil {
+		cachedTokens := chunk.UsageMetadata.CachedContentTokenCount
+		inputTokens := chunk.UsageMetadata.PromptTokenCount - cachedTokens
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
+
+		usage := map[string]interface{}{
+			"input_tokens":                inputTokens,
+			"output_tokens":               chunk.UsageMetadata.CandidatesTokenCount,
+			"cache_creation_input_tokens": 0, // Gemini doesn't provide this, set to 0
+		}
+		if cachedTokens > 0 {
+			usage["cache_read_input_tokens"] = cachedTokens
+		}
+		message["usage"] = usage
 	}
 
 	result := s.emit("message_start", map[string]interface{}{
@@ -350,14 +330,13 @@ func (s *ClaudeStreamingState) storeSignature(signature string) {
 	if signature != "" {
 		s.pendingSignature = &signature
 
-		// Cache signature for future requests (like CLIProxyAPI)
-		if s.sessionID != "" && s.currentThinkingText.Len() > 0 {
-			GlobalSignatureCache().CacheSessionSignature(
-				s.sessionID,
-				s.currentThinkingText.String(),
-				signature,
-			)
+		// Cache thinking family for cross-model compatibility (like Antigravity-Manager)
+		if s.modelVersion != "" {
+			GlobalSignatureCache().CacheThinkingFamily(signature, s.modelVersion)
 		}
+
+		// Best-effort global fallback store
+		StoreThoughtSignature(signature)
 	}
 }
 
@@ -395,17 +374,13 @@ func (s *ClaudeStreamingState) processThinking(text, signature string) [][]byte 
 			"type":     "thinking",
 			"thinking": "",
 		})...)
-		// Reset thinking text accumulator for new block
-		s.currentThinkingText.Reset()
 	}
 
-	// Emit thinking content and accumulate for signature caching
+	// Emit thinking content
 	if text != "" {
 		chunks = append(chunks, s.emitDelta("thinking_delta", map[string]interface{}{
 			"thinking": text,
 		}))
-		// Accumulate thinking text for signature caching (like CLIProxyAPI)
-		s.currentThinkingText.WriteString(text)
 	}
 
 	// Store signature for later (also caches it)

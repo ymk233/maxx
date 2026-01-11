@@ -22,6 +22,11 @@ func buildTools(claudeReq *ClaudeRequest) interface{} {
 			continue
 		}
 
+		// Server tools may omit name; only client tools are converted to functionDeclarations.
+		if strings.TrimSpace(tool.Name) == "" {
+			continue
+		}
+
 		// 2. Client-side tools: clean input_schema
 		inputSchema := tool.InputSchema
 		if inputSchema == nil {
@@ -74,34 +79,18 @@ func buildTools(claudeReq *ClaudeRequest) interface{} {
 // isWebSearchTool checks if a tool is a Web Search tool
 // These are server-side tools that should be converted to googleSearch
 func isWebSearchTool(tool ClaudeTool) bool {
-	nameLower := strings.ToLower(tool.Name)
-
-	// Common Web Search tool names
-	webSearchNames := []string{
-		"web_search",
-		"websearch",
-		"google_search",
-		"googlesearch",
-		"googlesearchretrieval",
-		"search",
-		"internet_search",
-	}
-
-	for _, name := range webSearchNames {
-		if nameLower == name {
-			return true
-		}
-	}
-
-	// Also check description for web search keywords
-	descLower := strings.ToLower(tool.Description)
-	if strings.Contains(descLower, "web search") ||
-		strings.Contains(descLower, "google search") ||
-		strings.Contains(descLower, "internet search") {
+	// Server tools: type starts with "web_search" (preferred)
+	if strings.HasPrefix(strings.ToLower(tool.Type), "web_search") {
 		return true
 	}
 
-	return false
+	// Fallback: name-based detection (includes legacy "google_search")
+	switch strings.ToLower(tool.Name) {
+	case "web_search", "google_search", "google_search_retrieval":
+		return true
+	default:
+		return false
+	}
 }
 
 // hasWebSearchTool checks if the request contains any Web Search tools

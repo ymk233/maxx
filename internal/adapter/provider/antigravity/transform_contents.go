@@ -16,60 +16,70 @@ func buildContents(
 ) ([]map[string]interface{}, error) {
 	contents := []map[string]interface{}{}
 
+	// State shared across the full conversation (matches Antigravity-Manager)
+	toolIDToName := make(map[string]string)
+	lastThoughtSignature := ""
+
 	for _, msg := range messages {
 		parts := []map[string]interface{}{}
 
-		// Parse content blocks
-		contentBlocks := parseContentBlocks(msg.Content)
-
-		// Context variables for signature passing
-		var lastThoughtSignature *string
-		toolIDToName := make(map[string]string)
-
-		for _, block := range contentBlocks {
-			switch block.Type {
-			case "thinking":
-				part := processThinkingBlock(block, &parts, mappedModel, lastThoughtSignature, signatureCache)
-				if part != nil {
-					parts = append(parts, part)
-					if sig, ok := part["thoughtSignature"].(string); ok {
-						lastThoughtSignature = &sig
+		// String style content: trim and ignore "(no content)" (matches Antigravity-Manager)
+		if text, ok := msg.Content.(string); ok {
+			if text != "(no content)" {
+				trimmed := strings.TrimSpace(text)
+				if trimmed != "" {
+					parts = append(parts, map[string]interface{}{"text": trimmed})
+				}
+			}
+		} else {
+			// Array style content blocks
+			contentBlocks := parseContentBlocks(msg.Content)
+			for _, block := range contentBlocks {
+				switch block.Type {
+				case "thinking":
+					part := processThinkingBlock(block, &parts, mappedModel, lastThoughtSignature, signatureCache)
+					if part != nil {
+						parts = append(parts, part)
+						if sig, ok := part["thoughtSignature"].(string); ok && sig != "" {
+							lastThoughtSignature = sig
+						}
 					}
-				}
 
-			case "redacted_thinking":
-				// Downgrade to text with redacted marker
-				// Reference: Antigravity-Manager's RedactedThinking handling
-				parts = append(parts, map[string]interface{}{
-					"text": "[Redacted Thinking: " + block.Data + "]",
-				})
+				case "redacted_thinking":
+					parts = append(parts, map[string]interface{}{
+						"text": "[Redacted Thinking: " + block.Data + "]",
+					})
 
-			case "text":
-				parts = append(parts, map[string]interface{}{
-					"text": block.Text,
-				})
+				case "text":
+					if block.Text == "(no content)" {
+						continue
+					}
+					parts = append(parts, map[string]interface{}{
+						"text": block.Text,
+					})
 
-			case "tool_use":
-				part := processToolUseBlock(block, lastThoughtSignature, signatureCache)
-				parts = append(parts, part)
-				toolIDToName[block.ID] = block.Name
-
-				// Cache tool signature
-				if sig, ok := part["thoughtSignature"].(string); ok && signatureCache != nil {
-					signatureCache.CacheToolSignature(block.ID, sig)
-				}
-
-			case "tool_result":
-				part := processToolResultBlock(block, toolIDToName, lastThoughtSignature)
-				parts = append(parts, part)
-
-			case "image":
-				if part := processInlineDataBlock(block); part != nil {
+				case "tool_use":
+					part := processToolUseBlock(block, lastThoughtSignature, signatureCache)
 					parts = append(parts, part)
-				}
-			case "document":
-				if part := processInlineDataBlock(block); part != nil {
+					toolIDToName[block.ID] = block.Name
+
+					// Cache tool signature (Layer 1 recovery)
+					if sig, ok := part["thoughtSignature"].(string); ok && signatureCache != nil {
+						signatureCache.CacheToolSignature(block.ID, sig)
+					}
+
+				case "tool_result":
+					part := processToolResultBlock(block, toolIDToName, lastThoughtSignature)
 					parts = append(parts, part)
+
+				case "image":
+					if part := processInlineDataBlock(block); part != nil {
+						parts = append(parts, part)
+					}
+				case "document":
+					if part := processInlineDataBlock(block); part != nil {
+						parts = append(parts, part)
+					}
 				}
 			}
 		}
@@ -94,7 +104,7 @@ func processThinkingBlock(
 	block ContentBlock,
 	parts *[]map[string]interface{},
 	mappedModel string,
-	lastThoughtSignature *string,
+	lastThoughtSignature string,
 	signatureCache *SignatureCache,
 ) map[string]interface{} {
 	// 1. Position check: must be first block
@@ -120,30 +130,24 @@ func processThinkingBlock(
 
 	// 4. Signature handling
 	signature := block.Signature
-	if signature == "" && lastThoughtSignature != nil {
-		signature = *lastThoughtSignature
+	if signature == "" && lastThoughtSignature != "" {
+		signature = lastThoughtSignature
 	}
 
 	// 5. Signature compatibility check
 	if signature != "" && signatureCache != nil {
 		if cachedFamily := signatureCache.GetSignatureFamily(signature); cachedFamily != "" {
 			if !IsModelCompatible(cachedFamily, mappedModel) {
-				log.Printf("[Antigravity] Signature family %s incompatible with %s, downgrade", cachedFamily, mappedModel)
-				return map[string]interface{}{
-					"text": block.Thinking,
-				}
+				log.Printf("[Antigravity] Incompatible signature detected (Family: %s, Target: %s). Dropping signature.", cachedFamily, mappedModel)
+				return map[string]interface{}{"text": block.Thinking}
 			}
-		} else {
-			// [NEW] Cache the signature family for future use
-			// Reference: Antigravity-Manager line 601
-			signatureCache.CacheThinkingFamily(signature, mappedModel)
 		}
+	}
 
-			// Valid signature (thinking threshold)
-			if hasValidThinkingSignature(block.Thinking, signature) {
-				part["thoughtSignature"] = signature
-			}
-		}
+	// Valid signature (thinking threshold)
+	if hasValidThinkingSignature(block.Thinking, signature) {
+		part["thoughtSignature"] = signature
+	}
 
 	return part
 }
@@ -152,7 +156,7 @@ func processThinkingBlock(
 // Reference: Antigravity-Manager's ToolUse processing
 func processToolUseBlock(
 	block ContentBlock,
-	lastThoughtSignature *string,
+	lastThoughtSignature string,
 	signatureCache *SignatureCache,
 ) map[string]interface{} {
 	// Clean args to remove JSON Schema fields that Gemini doesn't support
@@ -179,15 +183,15 @@ func processToolUseBlock(
 	// 4. Global fallback signature (from cache)
 	// Reference: Antigravity-Manager's multi-layer signature recovery
 	signature := block.Signature
-	if signature == "" && lastThoughtSignature != nil {
-		signature = *lastThoughtSignature
+	if signature == "" && lastThoughtSignature != "" {
+		signature = lastThoughtSignature
 	}
 	if signature == "" && signatureCache != nil {
 		signature = signatureCache.GetToolSignature(block.ID)
 	}
-	if signature == "" && signatureCache != nil {
-		// Final fallback: global signature
-		signature = signatureCache.GetGlobalSignature()
+	if signature == "" {
+		// Final fallback: global signature store (best-effort)
+		signature = GetThoughtSignature()
 	}
 
 	// Strict signature validation
@@ -208,7 +212,7 @@ func processToolUseBlock(
 func processToolResultBlock(
 	block ContentBlock,
 	toolIDToName map[string]string,
-	lastThoughtSignature *string,
+	lastThoughtSignature string,
 ) map[string]interface{} {
 	// 1. Merge content
 	mergedContent := extractToolResultContent(block.Content)
@@ -240,8 +244,8 @@ func processToolResultBlock(
 
 	// Backfill signature from context
 	// Reference: Antigravity-Manager's tool result signature backfill
-	if lastThoughtSignature != nil && *lastThoughtSignature != "" && HasValidSignature(*lastThoughtSignature) {
-		part["thoughtSignature"] = *lastThoughtSignature
+	if lastThoughtSignature != "" {
+		part["thoughtSignature"] = lastThoughtSignature
 	}
 
 	return part

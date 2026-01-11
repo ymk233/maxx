@@ -322,6 +322,9 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 			// Wait before retry (unless last attempt)
 			if attempt < retryConfig.MaxRetries {
 				waitTime := e.calculateBackoff(retryConfig, attempt)
+				if proxyErr.RetryAfter > 0 {
+					waitTime = proxyErr.RetryAfter
+				}
 				log.Printf("[Executor] Waiting %v before retry", waitTime)
 				select {
 				case <-ctx.Done():

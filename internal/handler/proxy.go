@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/Bowl42/maxx-next/internal/adapter/client"
 	ctxutil "github.com/Bowl42/maxx-next/internal/context"
@@ -132,6 +133,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func writeProxyError(w http.ResponseWriter, err *domain.ProxyError) {
 	w.Header().Set("Content-Type", "application/json")
+	if err.RetryAfter > 0 {
+		sec := int64(err.RetryAfter.Seconds())
+		if sec <= 0 {
+			sec = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(sec, 10))
+	}
 	w.WriteHeader(http.StatusBadGateway)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
@@ -145,6 +153,13 @@ func writeProxyError(w http.ResponseWriter, err *domain.ProxyError) {
 func writeStreamError(w http.ResponseWriter, err *domain.ProxyError) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	if err.RetryAfter > 0 {
+		sec := int64(err.RetryAfter.Seconds())
+		if sec <= 0 {
+			sec = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(sec, 10))
+	}
 	w.WriteHeader(http.StatusOK)
 
 	errorEvent := map[string]interface{}{

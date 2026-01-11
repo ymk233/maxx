@@ -13,22 +13,22 @@ import (
 type RateLimitReason int
 
 const (
-	RateLimitReasonUnknown RateLimitReason = iota
-	RateLimitReasonQuotaExhausted        // QUOTA_EXHAUSTED - 配额耗尽
-	RateLimitReasonRateLimitExceeded     // RATE_LIMIT_EXCEEDED - 速率限制
-	RateLimitReasonModelCapacityExhausted // MODEL_CAPACITY_EXHAUSTED - 模型容量耗尽
-	RateLimitReasonServerError           // 5xx errors
+	RateLimitReasonUnknown                RateLimitReason = iota
+	RateLimitReasonQuotaExhausted                         // QUOTA_EXHAUSTED - 配额耗尽
+	RateLimitReasonRateLimitExceeded                      // RATE_LIMIT_EXCEEDED - 速率限制
+	RateLimitReasonModelCapacityExhausted                 // MODEL_CAPACITY_EXHAUSTED - 模型容量耗尽
+	RateLimitReasonServerError                            // 5xx errors
 )
 
 // Default retry delays by reason (like Antigravity-Manager)
 const (
-	DefaultQuotaExhaustedDelay      = 60 * time.Second    // 60 seconds (first failure, like Antigravity-Manager)
-	DefaultRateLimitDelay           = 30 * time.Second    // 30 seconds
-	DefaultModelCapacityDelay       = 15 * time.Second    // 15 seconds (temporary GPU unavailability)
-	DefaultServerErrorDelay         = 20 * time.Second    // 20 seconds
-	DefaultUnknownDelay             = 60 * time.Second    // 60 seconds
-	MinRetryDelay                   = 2 * time.Second     // Minimum 2 seconds (safety buffer)
-	JitterFactor                    = 0.0                 // Jitter disabled for stability (aligned with Antigravity-Manager)
+	DefaultQuotaExhaustedDelay = 60 * time.Second // 60 seconds (first failure, like Antigravity-Manager)
+	DefaultRateLimitDelay      = 30 * time.Second // 30 seconds
+	DefaultModelCapacityDelay  = 15 * time.Second // 15 seconds (temporary GPU unavailability)
+	DefaultServerErrorDelay    = 20 * time.Second // 20 seconds
+	DefaultUnknownDelay        = 60 * time.Second // 60 seconds
+	MinRetryDelay              = 2 * time.Second  // Minimum 2 seconds (safety buffer)
+	JitterFactor               = 0.0              // Jitter disabled for stability (aligned with Antigravity-Manager)
 )
 
 // RetryInfo contains parsed retry information from a 429 response
@@ -56,15 +56,8 @@ func ParseRetryInfo(statusCode int, body []byte) *RetryInfo {
 
 	// Try to parse delay from response body
 	delay := parseRetryDelay(body)
-
-	// Apply default if no delay parsed
 	if delay == 0 {
-		delay = getDefaultDelay(reason)
-	}
-
-	// Apply minimum delay (safety buffer like Antigravity-Manager PR #28)
-	if delay < MinRetryDelay {
-		delay = MinRetryDelay
+		return nil
 	}
 
 	return &RetryInfo{
