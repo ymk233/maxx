@@ -72,6 +72,14 @@ export class WailsTransport implements Transport {
     await this.call<void>('AdminService.DeleteProvider', id);
   }
 
+  async exportProviders(): Promise<Provider[]> {
+    return this.call<Provider[]>('AdminService.ExportProviders');
+  }
+
+  async importProviders(providers: Provider[]): Promise<{ imported: number; skipped: number; errors: string[] }> {
+    return this.call<{ imported: number; skipped: number; errors: string[] }>('AdminService.ImportProviders', providers);
+  }
+
   // ===== Project API =====
 
   async getProjects(): Promise<Project[]> {

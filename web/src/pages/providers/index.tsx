@@ -197,6 +197,24 @@ export function ProvidersPage() {
           </div>
         )}
       </div>
+
+      {/* Import Status Toast */}
+      {importStatus && (
+        <div className="fixed bottom-6 right-6 bg-surface-primary border border-border rounded-lg shadow-lg p-4 max-w-md">
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-text-primary">
+              Import completed: {importStatus.imported} imported, {importStatus.skipped} skipped
+            </div>
+            {importStatus.errors.length > 0 && (
+              <div className="text-xs text-red-400 space-y-1">
+                {importStatus.errors.map((error, i) => (
+                  <div key={i}>• {error}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
