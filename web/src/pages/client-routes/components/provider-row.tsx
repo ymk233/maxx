@@ -258,6 +258,7 @@ export function ProviderRowContent({
           <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-400/20 to-transparent" />
           {/* 雪花动画 (CSS Background) */}
           <div className="absolute inset-0 animate-snowing pointer-events-none opacity-60" />
+          <div className="absolute inset-0 animate-snowing-secondary pointer-events-none opacity-60" />
         </>
       )}
 

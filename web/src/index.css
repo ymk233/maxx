@@ -515,6 +515,41 @@ body {
   animation: snowing-far 12s linear infinite;
 }
 
+@keyframes snowing-layer4 {
+  0% { background-position: 0 0; }
+  100% { background-position: 40px 200px; }
+}
+
+@keyframes snowing-layer5 {
+  0% { background-position: 0 0; }
+  100% { background-position: -80px 240px; }
+}
+
+.animate-snowing-secondary {
+  /* Layer 4: Micro (Tiny & Slow, high density) */
+  background-image:
+    radial-gradient(1.5px 1.5px at 10% 10%, rgba(34, 211, 238, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 30% 50%, rgba(34, 211, 238, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 50% 30%, rgba(34, 211, 238, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 70% 80%, rgba(34, 211, 238, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 90% 20%, rgba(34, 211, 238, 0.2) 50%, transparent 50%);
+  background-size: 200px 200px;
+  animation: snowing-layer4 15s linear infinite;
+}
+
+.animate-snowing-secondary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* Layer 5: Gust (Medium & Fast with drift) */
+  background-image:
+    radial-gradient(3px 3px at 15% 75%, rgba(34, 211, 238, 0.25) 50%, transparent 50%),
+    radial-gradient(4px 4px at 45% 25%, rgba(34, 211, 238, 0.25) 50%, transparent 50%),
+    radial-gradient(3px 3px at 85% 65%, rgba(34, 211, 238, 0.25) 50%, transparent 50%);
+  background-size: 160px 160px;
+  animation: snowing-layer5 7s linear infinite;
+}
+
 /* Marquee effect for table rows - direct background animation */
 .animate-marquee-row {
   background-color: rgba(0, 120, 212, 0.08);
