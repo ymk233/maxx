@@ -448,13 +448,24 @@ func parseTime(t sql.NullTime) time.Time {
 	return time.Time{}
 }
 
-// parseTime parses a string timestamp into time.Time
+// parseTimeString parses a string timestamp into time.Time
+// Supports multiple formats due to SQLite driver behavior differences
 func parseTimeString(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	// SQLite stores timestamps in RFC3339 format
-	return time.Parse("2006-01-02 15:04:05", s)
+
+	// Try RFC3339 first (what go-sqlite3 returns)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+
+	// Try our storage format
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, nil
 }
 
 // formatTime formats a time.Time into a string for SQLite
