@@ -39,7 +39,7 @@ export {
 } from './use-routes';
 
 // Session hooks
-export { sessionKeys, useSessions } from './use-sessions';
+export { sessionKeys, useSessions, useUpdateSessionProject } from './use-sessions';
 
 // RetryConfig hooks
 export {

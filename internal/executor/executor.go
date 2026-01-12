@@ -73,6 +73,7 @@ func (e *Executor) Execute(ctx context.Context, w http.ResponseWriter, req *http
 		RequestID:    generateRequestID(),
 		SessionID:    ctxutil.GetSessionID(ctx),
 		ClientType:   clientType,
+		ProjectID:    projectID,
 		RequestModel: requestModel,
 		StartTime:    time.Now(),
 		IsStream:     isStream,

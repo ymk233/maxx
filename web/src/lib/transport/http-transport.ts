@@ -158,6 +158,14 @@ export class HttpTransport implements Transport {
     return data ?? [];
   }
 
+  async updateSessionProject(sessionID: string, projectID: number): Promise<{ session: Session; updatedRequests: number }> {
+    const { data } = await this.client.put<{ session: Session; updatedRequests: number }>(
+      `/sessions/${encodeURIComponent(sessionID)}/project`,
+      { projectID }
+    );
+    return data;
+  }
+
   // ===== RetryConfig API =====
 
   async getRetryConfigs(): Promise<RetryConfig[]> {

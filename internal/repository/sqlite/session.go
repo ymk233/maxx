@@ -59,7 +59,7 @@ func (r *SessionRepository) GetBySessionID(sessionID string) (*domain.Session, e
 }
 
 func (r *SessionRepository) List() ([]*domain.Session, error) {
-	rows, err := r.db.db.Query(`SELECT id, created_at, updated_at, session_id, client_type, project_id FROM sessions ORDER BY id`)
+	rows, err := r.db.db.Query(`SELECT id, created_at, updated_at, session_id, client_type, project_id FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}

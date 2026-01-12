@@ -253,3 +253,15 @@ func (r *ProxyRequestRepository) scanRequestRowsLite(rows *sql.Rows) (*domain.Pr
 	p.Duration = time.Duration(durationMs) * time.Millisecond
 	return &p, nil
 }
+
+// UpdateProjectIDBySessionID 批量更新指定 sessionID 的所有请求的 projectID
+func (r *ProxyRequestRepository) UpdateProjectIDBySessionID(sessionID string, projectID uint64) (int64, error) {
+	result, err := r.db.db.Exec(
+		`UPDATE proxy_requests SET project_id = ?, updated_at = ? WHERE session_id = ?`,
+		projectID, time.Now(), sessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

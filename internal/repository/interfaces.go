@@ -63,6 +63,8 @@ type ProxyRequestRepository interface {
 	// after: 获取 id > after 的记录 (向前翻页/获取新数据)
 	ListCursor(limit int, before, after uint64) ([]*domain.ProxyRequest, error)
 	Count() (int64, error)
+	// UpdateProjectIDBySessionID 批量更新指定 sessionID 的所有请求的 projectID
+	UpdateProjectIDBySessionID(sessionID string, projectID uint64) (int64, error)
 }
 
 type ProxyUpstreamAttemptRepository interface {

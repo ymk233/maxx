@@ -240,6 +240,38 @@ func (s *AdminService) GetSessions() ([]*domain.Session, error) {
 	return s.sessionRepo.List()
 }
 
+// UpdateSessionProjectResult holds the result of updating session project
+type UpdateSessionProjectResult struct {
+	Session         *domain.Session `json:"session"`
+	UpdatedRequests int64           `json:"updatedRequests"`
+}
+
+// UpdateSessionProject updates the session's projectID and all related requests
+func (s *AdminService) UpdateSessionProject(sessionID string, projectID uint64) (*UpdateSessionProjectResult, error) {
+	// Get the session first
+	session, err := s.sessionRepo.GetBySessionID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update session's projectID
+	session.ProjectID = projectID
+	if err := s.sessionRepo.Update(session); err != nil {
+		return nil, err
+	}
+
+	// Batch update all requests with this sessionID
+	updatedCount, err := s.proxyRequestRepo.UpdateProjectIDBySessionID(sessionID, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &UpdateSessionProjectResult{
+		Session:         session,
+		UpdatedRequests: updatedCount,
+	}, nil
+}
+
 // ===== RetryConfig API =====
 
 func (s *AdminService) GetRetryConfigs() ([]*domain.RetryConfig, error) {

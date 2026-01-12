@@ -59,8 +59,9 @@ export interface Transport {
   updateRoute(id: number, data: Partial<Route>): Promise<Route>;
   deleteRoute(id: number): Promise<void>;
 
-  // ===== Session API (只读) =====
+  // ===== Session API =====
   getSessions(): Promise<Session[]>;
+  updateSessionProject(sessionID: string, projectID: number): Promise<{ session: Session; updatedRequests: number }>;
 
   // ===== RetryConfig API =====
   getRetryConfigs(): Promise<RetryConfig[]>;

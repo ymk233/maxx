@@ -51,7 +51,7 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "projects":
 		h.handleProjects(w, r, id, parts)
 	case "sessions":
-		h.handleSessions(w, r)
+		h.handleSessions(w, r, parts)
 	case "retry-configs":
 		h.handleRetryConfigs(w, r, id)
 	case "routing-strategies":
@@ -407,7 +407,14 @@ func (h *AdminHandler) handleProjectBySlug(w http.ResponseWriter, r *http.Reques
 }
 
 // Session handlers
-func (h *AdminHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
+// Routes: /admin/sessions, /admin/sessions/{sessionID}/project
+func (h *AdminHandler) handleSessions(w http.ResponseWriter, r *http.Request, parts []string) {
+	// Check for sub-resource: /admin/sessions/{sessionID}/project
+	if len(parts) > 3 && parts[3] == "project" {
+		h.handleSessionProject(w, r, parts[2])
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		sessions, err := h.svc.GetSessions()
@@ -419,6 +426,35 @@ func (h *AdminHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// handleSessionProject handles PUT /admin/sessions/{sessionID}/project
+func (h *AdminHandler) handleSessionProject(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session ID required"})
+		return
+	}
+
+	var body struct {
+		ProjectID uint64 `json:"projectID"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	result, err := h.svc.UpdateSessionProject(sessionID, body.ProjectID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // RetryConfig handlers
