@@ -24,7 +24,7 @@ Full example:
 ```
 services:
   maxx:
-    image: ghcr.io/bowl42/maxx:latest
+    image: ghcr.io/awsl-project/maxx:latest
     container_name: maxx
     restart: unless-stopped
     ports:
