@@ -36,8 +36,8 @@ export function useStreamingRequests(): StreamingState {
     setActiveRequests((prev) => {
       const next = new Map(prev);
 
-      // 已完成、失败或取消的请求从活动列表中移除
-      if (request.status === 'COMPLETED' || request.status === 'FAILED' || request.status === 'CANCELLED') {
+      // 已完成、失败、取消或拒绝的请求从活动列表中移除
+      if (request.status === 'COMPLETED' || request.status === 'FAILED' || request.status === 'CANCELLED' || request.status === 'REJECTED') {
         next.delete(request.requestID);
       } else {
         // PENDING 或 IN_PROGRESS 的请求添加到活动列表
@@ -57,8 +57,18 @@ export function useStreamingRequests(): StreamingState {
       handleRequestUpdate
     );
 
+    // 订阅 WebSocket 重连事件，清空活动请求列表
+    // 因为断开期间可能有请求完成，重连后需要重新同步状态
+    const unsubscribeReconnect = transport.subscribe(
+      '_ws_reconnected',
+      () => {
+        setActiveRequests(new Map());
+      }
+    );
+
     return () => {
       unsubscribe();
+      unsubscribeReconnect();
     };
   }, [handleRequestUpdate]);
 
