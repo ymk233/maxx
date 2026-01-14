@@ -1,4 +1,4 @@
-name: Release
+name: Wails Release
 
 on:
   push:
