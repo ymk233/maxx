@@ -47,10 +47,17 @@ export type {
   AntigravityBatchValidationResult,
   AntigravityOAuthResult,
   AntigravityGlobalSettings,
+  // Kiro
+  KiroTokenValidationResult,
+  KiroQuotaData,
   // Import
   ImportResult,
   // Cooldown
   Cooldown,
+  // API Token
+  APIToken,
+  APITokenCreateResult,
+  CreateAPITokenData,
 } from './types';
 
 export type {

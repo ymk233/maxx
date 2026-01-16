@@ -1,12 +1,16 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/awsl-project/maxx/internal/adapter/provider/antigravity"
+	"github.com/awsl-project/maxx/internal/adapter/provider/kiro"
 	"github.com/awsl-project/maxx/internal/domain"
 	"github.com/awsl-project/maxx/internal/repository"
 )
@@ -30,6 +34,7 @@ type AdminService struct {
 	proxyRequestRepo    repository.ProxyRequestRepository
 	attemptRepo         repository.ProxyUpstreamAttemptRepository
 	settingRepo         repository.SystemSettingRepository
+	apiTokenRepo        repository.APITokenRepository
 	serverAddr          string
 	adapterRefresher    ProviderAdapterRefresher
 }
@@ -45,6 +50,7 @@ func NewAdminService(
 	proxyRequestRepo repository.ProxyRequestRepository,
 	attemptRepo repository.ProxyUpstreamAttemptRepository,
 	settingRepo repository.SystemSettingRepository,
+	apiTokenRepo repository.APITokenRepository,
 	serverAddr string,
 	adapterRefresher ProviderAdapterRefresher,
 ) *AdminService {
@@ -58,6 +64,7 @@ func NewAdminService(
 		proxyRequestRepo:    proxyRequestRepo,
 		attemptRepo:         attemptRepo,
 		settingRepo:         settingRepo,
+		apiTokenRepo:        apiTokenRepo,
 		serverAddr:          serverAddr,
 		adapterRefresher:    adapterRefresher,
 	}
@@ -503,6 +510,97 @@ func (s *AdminService) ResetAntigravityGlobalSettings() (*AntigravityGlobalSetti
 	}, nil
 }
 
+// ===== Kiro Global Settings API =====
+
+// KiroGlobalSettings contains global Kiro settings
+type KiroGlobalSettings struct {
+	ModelMappingRules     []ModelMappingRule `json:"modelMappingRules"`
+	AvailableTargetModels []string           `json:"availableTargetModels"`
+}
+
+// GetKiroGlobalSettings retrieves the global Kiro settings
+// If no custom mapping exists, returns the preset mapping as default
+func (s *AdminService) GetKiroGlobalSettings() (*KiroGlobalSettings, error) {
+	settings := &KiroGlobalSettings{
+		ModelMappingRules:     []ModelMappingRule{},
+		AvailableTargetModels: kiro.AvailableTargetModels,
+	}
+
+	// Get model mapping rules from database
+	rulesJSON, err := s.settingRepo.Get(domain.SettingKeyKiroModelMapping)
+	if err == nil && rulesJSON != "" {
+		// Use ParseModelMappingRules which handles both new array format and legacy map format
+		kiroRules, parseErr := kiro.ParseModelMappingRules(rulesJSON)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		// Convert kiro.ModelMappingRule to service.ModelMappingRule
+		settings.ModelMappingRules = make([]ModelMappingRule, len(kiroRules))
+		for i, r := range kiroRules {
+			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
+		}
+	}
+
+	// If no rules exist, initialize with preset rules
+	if len(settings.ModelMappingRules) == 0 {
+		defaultRules := kiro.GetDefaultModelMappingRules()
+		settings.ModelMappingRules = make([]ModelMappingRule, len(defaultRules))
+		for i, r := range defaultRules {
+			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
+		}
+		// Save to database
+		if rulesJSON, err := json.Marshal(settings.ModelMappingRules); err == nil {
+			s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON))
+		}
+	}
+
+	return settings, nil
+}
+
+// UpdateKiroGlobalSettings updates the global Kiro settings
+func (s *AdminService) UpdateKiroGlobalSettings(settings *KiroGlobalSettings) error {
+	// Update model mapping rules
+	if settings.ModelMappingRules != nil {
+		rulesJSON, err := json.Marshal(settings.ModelMappingRules)
+		if err != nil {
+			return err
+		}
+		if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON)); err != nil {
+			return err
+		}
+	} else {
+		// Clear rules if nil
+		if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, "[]"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ResetKiroGlobalSettings resets the model mapping to preset defaults
+func (s *AdminService) ResetKiroGlobalSettings() (*KiroGlobalSettings, error) {
+	defaultRules := kiro.GetDefaultModelMappingRules()
+	rules := make([]ModelMappingRule, len(defaultRules))
+	for i, r := range defaultRules {
+		rules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
+	}
+
+	rulesJSON, err := json.Marshal(rules)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON)); err != nil {
+		return nil, err
+	}
+
+	return &KiroGlobalSettings{
+		ModelMappingRules:     rules,
+		AvailableTargetModels: kiro.AvailableTargetModels,
+	}, nil
+}
+
 // ===== Proxy Status API =====
 
 type ProxyStatus struct {
@@ -558,6 +656,11 @@ func (s *AdminService) autoSetSupportedClientTypes(provider *domain.Provider) {
 			domain.ClientTypeOpenAI,
 			domain.ClientTypeGemini,
 		}
+	case "kiro":
+		// Kiro natively supports Claude protocol only
+		provider.SupportedClientTypes = []domain.ClientType{
+			domain.ClientTypeClaude,
+		}
 	case "custom":
 		// Custom providers use their configured SupportedClientTypes
 		// If not set, default to OpenAI
@@ -565,4 +668,74 @@ func (s *AdminService) autoSetSupportedClientTypes(provider *domain.Provider) {
 			provider.SupportedClientTypes = []domain.ClientType{domain.ClientTypeOpenAI}
 		}
 	}
+}
+
+// ===== API Token API =====
+
+func (s *AdminService) GetAPITokens() ([]*domain.APIToken, error) {
+	return s.apiTokenRepo.List()
+}
+
+func (s *AdminService) GetAPIToken(id uint64) (*domain.APIToken, error) {
+	return s.apiTokenRepo.GetByID(id)
+}
+
+// CreateAPIToken creates a new API token and returns the plain token (only shown once)
+func (s *AdminService) CreateAPIToken(name, description string, projectID uint64, expiresAt *time.Time) (*domain.APITokenCreateResult, error) {
+	// Generate token
+	plain, prefix, err := generateAPIToken()
+	if err != nil {
+		return nil, err
+	}
+
+	token := &domain.APIToken{
+		Token:       plain,
+		TokenPrefix: prefix,
+		Name:        name,
+		Description: description,
+		ProjectID:   projectID,
+		IsEnabled:   true,
+		ExpiresAt:   expiresAt,
+	}
+
+	if err := s.apiTokenRepo.Create(token); err != nil {
+		return nil, err
+	}
+
+	return &domain.APITokenCreateResult{
+		Token:    plain,
+		APIToken: token,
+	}, nil
+}
+
+func (s *AdminService) UpdateAPIToken(token *domain.APIToken) error {
+	return s.apiTokenRepo.Update(token)
+}
+
+func (s *AdminService) DeleteAPIToken(id uint64) error {
+	return s.apiTokenRepo.Delete(id)
+}
+
+// generateAPIToken creates a new random token
+// Returns: plain token, prefix for display, error if generation fails
+func generateAPIToken() (plain string, prefix string, err error) {
+	const tokenPrefix = "maxx_"
+	const tokenPrefixDisplayLen = 12
+
+	// Generate 32 random bytes (64 hex chars)
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", "", fmt.Errorf("failed to generate random token: %w", err)
+	}
+
+	plain = tokenPrefix + hex.EncodeToString(bytes)
+
+	// Create display prefix (e.g., "maxx_abc12345...")
+	if len(plain) > tokenPrefixDisplayLen {
+		prefix = plain[:tokenPrefixDisplayLen] + "..."
+	} else {
+		prefix = plain
+	}
+
+	return plain, prefix, nil
 }

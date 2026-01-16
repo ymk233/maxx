@@ -33,6 +33,13 @@ import type {
   AntigravityGlobalSettings,
   ImportResult,
   Cooldown,
+  KiroTokenValidationResult,
+  KiroQuotaData,
+  AuthStatus,
+  AuthVerifyResult,
+  APIToken,
+  APITokenCreateResult,
+  CreateAPITokenData,
 } from './types';
 
 export class HttpTransport implements Transport {
@@ -43,10 +50,11 @@ export class HttpTransport implements Transport {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectPromise: Promise<void> | null = null;
+  private authToken: string | null = null;
 
   constructor(config: TransportConfig = {}) {
     this.config = {
-      baseURL: config.baseURL ?? '/admin',
+      baseURL: config.baseURL ?? '/api/admin',
       wsURL: config.wsURL ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`,
       reconnectInterval: config.reconnectInterval ?? 3000,
       maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
@@ -57,6 +65,14 @@ export class HttpTransport implements Transport {
       headers: {
         'Content-Type': 'application/json',
       },
+    });
+
+    // Add request interceptor to include auth header
+    this.client.interceptors.request.use((config) => {
+      if (this.authToken) {
+        config.headers['Authorization'] = `Bearer ${this.authToken}`;
+      }
+      return config;
     });
   }
 
@@ -300,7 +316,7 @@ export class HttpTransport implements Transport {
 
   async validateAntigravityToken(refreshToken: string): Promise<AntigravityTokenValidationResult> {
     const { data } = await axios.post<AntigravityTokenValidationResult>(
-      '/antigravity/validate-token',
+      '/api/antigravity/validate-token',
       { refreshToken }
     );
     return data;
@@ -308,7 +324,7 @@ export class HttpTransport implements Transport {
 
   async validateAntigravityTokens(tokens: string[]): Promise<AntigravityBatchValidationResult> {
     const { data } = await axios.post<AntigravityBatchValidationResult>(
-      '/antigravity/validate-tokens',
+      '/api/antigravity/validate-tokens',
       { tokens }
     );
     return data;
@@ -316,7 +332,7 @@ export class HttpTransport implements Transport {
 
   async validateAntigravityTokenText(tokenText: string): Promise<AntigravityBatchValidationResult> {
     const { data } = await axios.post<AntigravityBatchValidationResult>(
-      '/antigravity/validate-tokens',
+      '/api/antigravity/validate-tokens',
       { tokenText }
     );
     return data;
@@ -325,7 +341,7 @@ export class HttpTransport implements Transport {
   async getAntigravityProviderQuota(providerId: number, forceRefresh?: boolean): Promise<AntigravityQuotaData> {
     const params = forceRefresh ? { refresh: 'true' } : undefined;
     const { data } = await axios.get<AntigravityQuotaData>(
-      `/antigravity/providers/${providerId}/quota`,
+      `/api/antigravity/providers/${providerId}/quota`,
       { params }
     );
     return data;
@@ -333,7 +349,7 @@ export class HttpTransport implements Transport {
 
   async startAntigravityOAuth(): Promise<{ authURL: string; state: string }> {
     const { data } = await axios.post<{ authURL: string; state: string }>(
-      '/antigravity/oauth/start'
+      '/api/antigravity/oauth/start'
     );
     return data;
   }
@@ -353,6 +369,23 @@ export class HttpTransport implements Transport {
     return data;
   }
 
+  // ===== Kiro API =====
+
+  async validateKiroSocialToken(refreshToken: string): Promise<KiroTokenValidationResult> {
+    const { data } = await axios.post<KiroTokenValidationResult>(
+      '/api/kiro/validate-social-token',
+      { refreshToken }
+    );
+    return data;
+  }
+
+  async getKiroProviderQuota(providerId: number): Promise<KiroQuotaData> {
+    const { data } = await axios.get<KiroQuotaData>(
+      `/api/kiro/providers/${providerId}/quota`
+    );
+    return data;
+  }
+
   // ===== Cooldown API =====
 
   async getCooldowns(): Promise<Cooldown[]> {
@@ -362,6 +395,55 @@ export class HttpTransport implements Transport {
 
   async clearCooldown(providerId: number): Promise<void> {
     await this.client.delete(`/cooldowns/${providerId}`);
+  }
+
+  // ===== Auth API =====
+
+  async getAuthStatus(): Promise<AuthStatus> {
+    const { data } = await axios.get<AuthStatus>('/api/admin/auth/status');
+    return data;
+  }
+
+  async verifyPassword(password: string): Promise<AuthVerifyResult> {
+    const { data } = await axios.post<AuthVerifyResult>(
+      '/api/admin/auth/verify',
+      { password }
+    );
+    return data;
+  }
+
+  setAuthToken(token: string): void {
+    this.authToken = token;
+  }
+
+  clearAuthToken(): void {
+    this.authToken = null;
+  }
+
+  // ===== API Token API =====
+
+  async getAPITokens(): Promise<APIToken[]> {
+    const { data } = await this.client.get<APIToken[]>('/api-tokens');
+    return data ?? [];
+  }
+
+  async getAPIToken(id: number): Promise<APIToken> {
+    const { data } = await this.client.get<APIToken>(`/api-tokens/${id}`);
+    return data;
+  }
+
+  async createAPIToken(payload: CreateAPITokenData): Promise<APITokenCreateResult> {
+    const { data } = await this.client.post<APITokenCreateResult>('/api-tokens', payload);
+    return data;
+  }
+
+  async updateAPIToken(id: number, payload: Partial<APIToken>): Promise<APIToken> {
+    const { data } = await this.client.put<APIToken>(`/api-tokens/${id}`, payload);
+    return data;
+  }
+
+  async deleteAPIToken(id: number): Promise<void> {
+    await this.client.delete(`/api-tokens/${id}`);
   }
 
   // ===== WebSocket 订阅 =====

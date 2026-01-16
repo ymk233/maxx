@@ -12,6 +12,7 @@ import (
 	"github.com/awsl-project/maxx/internal/adapter/client"
 	"github.com/awsl-project/maxx/internal/adapter/provider/antigravity"
 	_ "github.com/awsl-project/maxx/internal/adapter/provider/custom" // Register custom adapter
+	_ "github.com/awsl-project/maxx/internal/adapter/provider/kiro"   // Register kiro adapter
 	"github.com/awsl-project/maxx/internal/cooldown"
 	"github.com/awsl-project/maxx/internal/domain"
 	"github.com/awsl-project/maxx/internal/executor"
@@ -91,6 +92,7 @@ func main() {
 	antigravityQuotaRepo := sqlite.NewAntigravityQuotaRepository(db)
 	cooldownRepo := sqlite.NewCooldownRepository(db)
 	failureCountRepo := sqlite.NewFailureCountRepository(db)
+	apiTokenRepo := sqlite.NewAPITokenRepository(db)
 
 	// Initialize cooldown manager with database persistence
 	cooldown.Default().SetRepository(cooldownRepo)
@@ -114,6 +116,7 @@ func main() {
 	cachedRoutingStrategyRepo := cached.NewRoutingStrategyRepository(routingStrategyRepo)
 	cachedSessionRepo := cached.NewSessionRepository(sessionRepo)
 	cachedProjectRepo := cached.NewProjectRepository(projectRepo)
+	cachedAPITokenRepo := cached.NewAPITokenRepository(apiTokenRepo)
 
 	// Load cached data
 	if err := cachedProviderRepo.Load(); err != nil {
@@ -184,6 +187,7 @@ func main() {
 		proxyRequestRepo,
 		attemptRepo,
 		settingRepo,
+		cachedAPITokenRepo,
 		*addr,
 		r, // Router implements ProviderAdapterRefresher interface
 	)
@@ -200,10 +204,26 @@ func main() {
 		}, nil
 	})
 
+	// Create auth middleware
+	authMiddleware := handler.NewAuthMiddleware()
+	if authMiddleware.IsEnabled() {
+		log.Println("Admin API authentication is enabled")
+	} else {
+		log.Println("Admin API authentication is disabled (set MAXX_ADMIN_PASSWORD to enable)")
+	}
+
+	// Create token auth middleware
+	tokenAuthMiddleware := handler.NewTokenAuthMiddleware(cachedAPITokenRepo, settingRepo)
+	if tokenAuthMiddleware.IsEnabled() {
+		log.Println("Proxy token authentication is enabled")
+	}
+
 	// Create handlers
-	proxyHandler := handler.NewProxyHandler(clientAdapter, exec, cachedSessionRepo)
+	proxyHandler := handler.NewProxyHandler(clientAdapter, exec, cachedSessionRepo, tokenAuthMiddleware)
 	adminHandler := handler.NewAdminHandler(adminService, logPath)
+	authHandler := handler.NewAuthHandler(authMiddleware)
 	antigravityHandler := handler.NewAntigravityHandler(adminService, antigravityQuotaRepo, wsHub)
+	kiroHandler := handler.NewKiroHandler(adminService)
 
 	// Use already-created cached project repository for project proxy handler
 	projectProxyHandler := handler.NewProjectProxyHandler(proxyHandler, cachedProjectRepo)
@@ -211,11 +231,15 @@ func main() {
 	// Setup routes
 	mux := http.NewServeMux()
 
-	// Admin API routes
-	mux.Handle("/admin/", adminHandler)
+	// Admin auth endpoint (no authentication required for this endpoint)
+	mux.Handle("/api/admin/auth/", http.StripPrefix("/api", authHandler))
 
-	// Antigravity API routes
-	mux.Handle("/antigravity/", antigravityHandler)
+	// Admin API routes with authentication middleware
+	mux.Handle("/api/admin/", http.StripPrefix("/api", authMiddleware.Wrap(adminHandler)))
+
+	// Other API routes (no authentication required)
+	mux.Handle("/api/antigravity/", http.StripPrefix("/api", antigravityHandler))
+	mux.Handle("/api/kiro/", http.StripPrefix("/api", kiroHandler))
 
 	// Proxy routes - catch all AI API endpoints
 	// Claude API
@@ -250,7 +274,7 @@ func main() {
 	log.Printf("Data directory: %s", dataDirPath)
 	log.Printf("  Database: %s", dbPath)
 	log.Printf("  Log file: %s", logPath)
-	log.Printf("Admin API: http://localhost%s/admin/", *addr)
+	log.Printf("Admin API: http://localhost%s/api/admin/", *addr)
 	log.Printf("WebSocket: ws://localhost%s/ws", *addr)
 	log.Printf("Proxy endpoints:")
 	log.Printf("  Claude: http://localhost%s/v1/messages", *addr)

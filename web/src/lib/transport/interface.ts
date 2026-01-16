@@ -30,6 +30,13 @@ import type {
   AntigravityGlobalSettings,
   ImportResult,
   Cooldown,
+  KiroTokenValidationResult,
+  KiroQuotaData,
+  AuthStatus,
+  AuthVerifyResult,
+  APIToken,
+  APITokenCreateResult,
+  CreateAPITokenData,
 } from './types';
 
 /**
@@ -110,9 +117,26 @@ export interface Transport {
   updateAntigravityGlobalSettings(settings: AntigravityGlobalSettings): Promise<AntigravityGlobalSettings>;
   resetAntigravityGlobalSettings(): Promise<AntigravityGlobalSettings>;
 
+  // ===== Kiro API =====
+  validateKiroSocialToken(refreshToken: string): Promise<KiroTokenValidationResult>;
+  getKiroProviderQuota(providerId: number): Promise<KiroQuotaData>;
+
   // ===== Cooldown API =====
   getCooldowns(): Promise<Cooldown[]>;
   clearCooldown(providerId: number): Promise<void>;
+
+  // ===== Auth API =====
+  getAuthStatus(): Promise<AuthStatus>;
+  verifyPassword(password: string): Promise<AuthVerifyResult>;
+  setAuthToken(token: string): void;
+  clearAuthToken(): void;
+
+  // ===== API Token API =====
+  getAPITokens(): Promise<APIToken[]>;
+  getAPIToken(id: number): Promise<APIToken>;
+  createAPIToken(data: CreateAPITokenData): Promise<APITokenCreateResult>;
+  updateAPIToken(id: number, data: Partial<APIToken>): Promise<APIToken>;
+  deleteAPIToken(id: number): Promise<void>;
 
   // ===== 实时订阅 =====
   subscribe<T = unknown>(eventType: WSMessageType, callback: EventCallback<T>): UnsubscribeFn;

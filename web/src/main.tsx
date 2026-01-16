@@ -6,6 +6,7 @@ import { TransportProvider } from '@/lib/transport';
 import { ThemeProvider } from '@/components/theme-provider';
 import App from './App';
 import './index.css';
+import '@/lib/i18n'; // 初始化 i18n
 
 // 加载中显示的内容
 function LoadingFallback() {
@@ -58,7 +59,7 @@ function ErrorFallback(error: Error) {
 // Render the app
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider defaultTheme="light" storageKey="maxx-ui-theme">
+    <ThemeProvider defaultTheme="system" storageKey="maxx-ui-theme">
       <TransportProvider fallback={<LoadingFallback />} errorFallback={ErrorFallback}>
         <QueryClientProvider client={queryClient}>
           <App />

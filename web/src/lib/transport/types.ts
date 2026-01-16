@@ -24,9 +24,20 @@ export interface ProviderConfigAntigravity {
   modelMapping?: Record<string, string>;
 }
 
+export interface ProviderConfigKiro {
+  authMethod: 'social' | 'idc';
+  email?: string;
+  refreshToken: string;
+  region?: string;
+  clientID?: string;
+  clientSecret?: string;
+  modelMapping?: Record<string, string>;
+}
+
 export interface ProviderConfig {
   custom?: ProviderConfigCustom;
   antigravity?: ProviderConfigAntigravity;
+  kiro?: ProviderConfigKiro;
 }
 
 export interface Provider {
@@ -172,6 +183,8 @@ export interface ProxyRequest {
   cache5mWriteCount: number;
   cache1hWriteCount: number;
   cost: number;
+  // API Token ID
+  apiTokenID: number;
 }
 
 // ===== ProxyUpstreamAttempt =====
@@ -341,6 +354,37 @@ export interface AntigravityGlobalSettings {
   availableTargetModels?: string[]; // 只在响应中返回，更新时不需要
 }
 
+// ===== Kiro 类型 =====
+
+export interface KiroTokenValidationResult {
+  valid: boolean;
+  error?: string;
+  email?: string;
+  userId?: string;
+  subscriptionType?: string; // FREE, PRO, etc.
+  usageLimit?: number;
+  currentUsage?: number;
+  daysUntilReset?: number;
+  isBanned: boolean;
+  banReason?: string;
+  profileArn?: string;
+  accessToken?: string;
+  refreshToken?: string;
+}
+
+export interface KiroQuotaData {
+  total_limit: number;      // 总额度（包括基础+免费试用）
+  available: number;        // 可用额度
+  used: number;             // 已使用额度
+  days_until_reset: number;
+  subscription_type: string;
+  free_trial_status?: string;
+  email?: string;
+  is_banned: boolean;
+  ban_reason?: string;
+  last_updated: number;
+}
+
 // ===== 回调类型 =====
 
 export type EventCallback<T = unknown> = (data: T) => void;
@@ -376,4 +420,45 @@ export interface Cooldown {
   clientType: string; // 'all' for global cooldown, or specific client type
   untilTime: string; // ISO 8601 timestamp (Go time.Time)
   reason: CooldownReason;
+}
+
+// ===== Auth 相关 =====
+
+export interface AuthStatus {
+  authEnabled: boolean;
+}
+
+export interface AuthVerifyResult {
+  success: boolean;
+  token?: string;
+  error?: string;
+}
+
+// ===== API Token =====
+
+export interface APIToken {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  token: string;
+  tokenPrefix: string;
+  name: string;
+  description: string;
+  projectID: number;
+  isEnabled: boolean;
+  expiresAt?: string;
+  lastUsedAt?: string;
+  useCount: number;
+}
+
+export interface APITokenCreateResult {
+  token: string; // 明文 Token（仅创建时返回）
+  apiToken: APIToken;
+}
+
+export interface CreateAPITokenData {
+  name: string;
+  description?: string;
+  projectID?: number;
+  expiresAt?: string;
 }
