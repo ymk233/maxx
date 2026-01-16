@@ -111,8 +111,6 @@ export function SortableProviderRow({
         ref={setNodeRef}
         style={style}
         {...attributes}
-        {...listeners}
-        className="active:cursor-grabbing"
       >
         <ProviderRowContent
           item={item}
@@ -124,6 +122,7 @@ export function SortableProviderRow({
           onToggle={onToggle}
           onRowClick={handleRowClick}
           isInCooldown={!!cooldown}
+          dragHandleListeners={listeners}
         />
       </div>
 
@@ -158,6 +157,7 @@ type ProviderRowContentProps = {
   onToggle: () => void
   onRowClick?: (e: React.MouseEvent) => void
   isInCooldown?: boolean
+  dragHandleListeners?: any
 }
 
 // 获取 Claude 模型额度百分比和重置时间
@@ -174,13 +174,13 @@ function getClaudeQuotaInfo(
 }
 
 // 格式化重置时间
-function formatResetTime(resetTime: string): string {
+function formatResetTime(resetTime: string, t: (key: string) => string): string {
   try {
     const reset = new Date(resetTime)
     const now = new Date()
     const diff = reset.getTime() - now.getTime()
 
-    if (diff <= 0) return 'Soon'
+    if (diff <= 0) return t('proxy.comingSoon')
 
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
@@ -209,7 +209,9 @@ export function ProviderRowContent({
   onToggle,
   onRowClick,
   isInCooldown: isInCooldownProp,
+  dragHandleListeners,
 }: ProviderRowContentProps) {
+  const { t } = useTranslation()
   const { provider, enabled, isNative } = item
   const color = getProviderColorVar(provider.type as ProviderType)
   const isAntigravity = provider.type === 'antigravity'
@@ -260,8 +262,8 @@ export function ProviderRowContent({
           : enabled
             ? streamingCount > 0
               ? 'bg-accent/5 border-transparent ring-1 ring-black/5 dark:ring-white/10'
-              : 'bg-surface-primary/60 border-border hover:border-emerald-500/30 hover:bg-surface-primary shadow-sm cursor-pointer'
-            : 'bg-surface-secondary/40 border-dashed border-border opacity-70 cursor-pointer grayscale-[0.5] hover:opacity-100 hover:grayscale-0'
+              : 'bg-card/60 border-border hover:border-emerald-500/30 hover:bg-card shadow-sm cursor-pointer'
+            : 'bg-muted/40 border-dashed border-border opacity-70 cursor-pointer grayscale-[0.5] hover:opacity-100 hover:grayscale-0'
       )}
       style={{
         borderColor:
@@ -295,14 +297,17 @@ export function ProviderRowContent({
 
       {/* Drag Handle & Index */}
       <div className="relative z-10 flex flex-col items-center gap-1.5 w-7 shrink-0">
-        <div className="p-1 rounded-md hover:bg-surface-hover transition-colors">
+        <div 
+          className="p-1 rounded-md hover:bg-accent transition-colors cursor-grab active:cursor-grabbing"
+          {...dragHandleListeners}
+        >
           <GripVertical
             size={14}
-            className="text-text-muted group-hover:text-text-secondary"
+            className="text-muted-foreground group-hover:text-muted-foreground"
           />
         </div>
         <span
-          className="text-[10px] font-mono font-bold w-5 h-5 flex items-center justify-center rounded-full border border-border bg-surface-secondary shadow-inner"
+          className="text-[10px] font-mono font-bold w-5 h-5 flex items-center justify-center rounded-full border border-border bg-muted shadow-inner"
           style={{ color: enabled ? color : 'var(--color-text-muted)' }}
         >
           {index + 1}
@@ -317,7 +322,7 @@ export function ProviderRowContent({
             'relative w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 overflow-hidden',
             isInCooldown
               ? 'bg-cyan-900/40 border border-cyan-500/30'
-              : 'bg-surface-secondary border border-border shadow-inner'
+              : 'bg-muted border border-border shadow-inner'
           )}
           style={!isInCooldown && enabled ? { color } : {}}
         >
@@ -351,10 +356,10 @@ export function ProviderRowContent({
               className={cn(
                 'text-[14px] font-bold truncate transition-colors',
                 isInCooldown
-                  ? 'text-text-primary'
+                  ? 'text-foreground'
                   : enabled
-                    ? 'text-text-primary'
-                    : 'text-text-muted'
+                    ? 'text-foreground'
+                    : 'text-muted-foreground'
               )}
             >
               {provider.name}
@@ -376,17 +381,17 @@ export function ProviderRowContent({
             className={cn(
               'text-[11px] font-medium truncate flex items-center gap-1',
               isInCooldown
-                ? 'text-text-muted'
+                ? 'text-muted-foreground'
                 : enabled
-                  ? 'text-text-muted'
-                  : 'text-text-muted/50'
+                  ? 'text-muted-foreground'
+                  : 'text-muted-foreground/50'
             )}
           >
             <Info size={10} className="shrink-0" />
             {provider.config?.custom?.clientBaseURL?.[clientType] ||
               provider.config?.custom?.baseURL ||
               provider.config?.antigravity?.endpoint ||
-              'Default endpoint'}
+              t('provider.defaultEndpoint')}
           </div>
         </div>
       </div>
@@ -399,17 +404,17 @@ export function ProviderRowContent({
             className={cn('w-24 flex flex-col gap-1', !enabled && 'opacity-40')}
           >
             <div className="flex items-center justify-between px-0.5">
-              <span className="text-[9px] font-black text-text-muted/80 uppercase tracking-tighter">
+              <span className="text-[9px] font-black text-muted-foreground/80 uppercase tracking-tighter">
                 Claude
               </span>
               {claudeInfo && (
-                <span className="text-[9px] font-mono text-text-muted/60">
-                  {formatResetTime(claudeInfo.resetTime)}
+                <span className="text-[9px] font-mono text-muted-foreground/60">
+                  {formatResetTime(claudeInfo.resetTime, t)}
                 </span>
               )}
             </div>
             {claudeInfo ? (
-              <div className="h-2 bg-surface-secondary rounded-full overflow-hidden border border-border/50 p-[1px]">
+              <div className="h-2 bg-muted rounded-full overflow-hidden border border-border/50 p-[1px]">
                 <div
                   className={cn(
                     'h-full rounded-full transition-all duration-1000',
@@ -429,7 +434,7 @@ export function ProviderRowContent({
                 />
               </div>
             ) : (
-              <div className="h-1.5 bg-surface-secondary rounded-full" />
+              <div className="h-1.5 bg-muted rounded-full" />
             )}
           </div>
         )}
@@ -460,7 +465,7 @@ export function ProviderRowContent({
         ) : (
           <div
             className={cn(
-              'flex items-center gap-px bg-surface-secondary/50 rounded-xl border border-border/60 p-0.5 backdrop-blur-sm',
+              'flex items-center gap-px bg-muted/50 rounded-xl border border-border/60 p-0.5 backdrop-blur-sm',
               !enabled && 'opacity-40'
             )}
           >
@@ -468,7 +473,7 @@ export function ProviderRowContent({
               <>
                 {/* Success */}
                 <div className="flex flex-col items-center min-w-[50px] px-2 py-1">
-                  <span className="text-[8px] font-bold text-text-muted uppercase tracking-tight">
+                  <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">
                     SR
                   </span>
                   <span
@@ -487,7 +492,7 @@ export function ProviderRowContent({
                 <div className="w-[1px] h-6 bg-border/40" />
                 {/* Tokens */}
                 <div className="flex flex-col items-center min-w-[50px] px-2 py-1">
-                  <span className="text-[8px] font-bold text-text-muted uppercase tracking-tight">
+                  <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">
                     TOKEN
                   </span>
                   <span className="font-mono font-black text-xs text-blue-400">
@@ -499,7 +504,7 @@ export function ProviderRowContent({
                 <div className="w-[1px] h-6 bg-border/40" />
                 {/* Cost */}
                 <div className="flex flex-col items-center min-w-[60px] px-2 py-1">
-                  <span className="text-[8px] font-bold text-text-muted uppercase tracking-tight">
+                  <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-tight">
                     COST
                   </span>
                   <span className="font-mono font-black text-xs text-purple-400">
@@ -508,7 +513,7 @@ export function ProviderRowContent({
                 </div>
               </>
             ) : (
-              <div className="px-6 py-2 flex items-center gap-2 text-text-muted/30">
+              <div className="px-6 py-2 flex items-center gap-2 text-muted-foreground/30">
                 <Activity size={12} />
                 <span className="text-[10px] font-bold uppercase tracking-widest">
                   No Data

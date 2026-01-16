@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, Trash2, ArrowRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ModelInput } from '@/components/ui/model-input'
 
@@ -17,6 +18,7 @@ export function ModelMappingEditor({
   disabled = false,
   targetOnlyAntigravity = false,
 }: ModelMappingEditorProps) {
+  const { t } = useTranslation()
   const [newFrom, setNewFrom] = useState('')
   const [newTo, setNewTo] = useState('')
 
@@ -61,15 +63,15 @@ export function ModelMappingEditor({
               <ModelInput
                 value={from}
                 onChange={newKey => handleUpdate(from, newKey, to)}
-                placeholder="Request Model"
+                placeholder={t('modelMapping.requestModel')}
                 className="flex-1"
                 disabled={disabled}
               />
-              <ArrowRight size={16} className="text-text-secondary shrink-0" />
+              <ArrowRight size={16} className="text-muted-foreground shrink-0" />
               <ModelInput
                 value={to}
                 onChange={newVal => handleUpdate(from, from, newVal)}
-                placeholder="Mapped Model"
+                placeholder={t('modelMapping.mappedModel')}
                 className="flex-1"
                 disabled={disabled}
                 providers={targetProviders}
@@ -80,7 +82,7 @@ export function ModelMappingEditor({
                 size="icon"
                 onClick={() => handleRemove(from)}
                 disabled={disabled}
-                className="shrink-0 text-text-secondary hover:text-error"
+                className="shrink-0 text-muted-foreground hover:text-error"
               >
                 <Trash2 size={16} />
               </Button>
@@ -98,7 +100,7 @@ export function ModelMappingEditor({
           className="flex-1"
           disabled={disabled}
         />
-        <ArrowRight size={16} className="text-text-secondary shrink-0" />
+        <ArrowRight size={16} className="text-muted-foreground shrink-0" />
         <ModelInput
           value={newTo}
           onChange={setNewTo}
@@ -120,7 +122,7 @@ export function ModelMappingEditor({
       </div>
 
       {entries.length === 0 && (
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-muted-foreground">
           No model mappings configured. Add mappings to transform request models
           before sending to upstream.
         </p>

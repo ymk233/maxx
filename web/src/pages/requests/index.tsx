@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   useProxyRequests,
   useProxyRequestUpdates,
@@ -48,6 +49,7 @@ export const statusVariant: Record<
 }
 
 export function RequestsPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   // 使用游标分页：存储每页的 lastId 用于向后翻页
   const [cursors, setCursors] = useState<(number | undefined)[]>([undefined])
@@ -111,12 +113,12 @@ export function RequestsPage() {
       <PageHeader
         icon={Activity}
         iconClassName="text-emerald-500"
-        title="Requests"
-        description={`${total} total requests`}
+        title={t('requests.title')}
+        description={t('requests.description', { count: total })}
       >
         <Button onClick={handleRefresh} disabled={isLoading}>
           <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
-          <span>Refresh</span>
+          <span>{t('requests.refresh')}</span>
         </Button>
       </PageHeader>
 
@@ -128,72 +130,72 @@ export function RequestsPage() {
           </div>
         ) : requests.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-text-muted">
-            <div className="p-4 bg-surface-secondary rounded-full mb-4">
+            <div className="p-4 bg-muted rounded-full mb-4">
               <Activity size={32} className="opacity-50" />
             </div>
-            <p className="text-body font-medium">No requests recorded</p>
+            <p className="text-body font-medium">{t('requests.noRequests')}</p>
             <p className="text-caption mt-1">
-              Requests will appear here automatically
+              {t('requests.noRequestsHint')}
             </p>
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
             <Table>
-              <TableHeader className="bg-surface-primary/80 backdrop-blur-md sticky top-0 z-10 shadow-sm border-b border-border">
+              <TableHeader className="bg-card/80 backdrop-blur-md sticky top-0 z-10 shadow-sm border-b border-border">
                 <TableRow className="hover:bg-transparent border-none text-sm">
-                  <TableHead className="w-[180px] font-medium">Time</TableHead>
+                  <TableHead className="w-[180px] font-medium">{t('requests.time')}</TableHead>
                   <TableHead className="w-[120px] font-medium">
-                    Client
+                    {t('requests.client')}
                   </TableHead>
-                  <TableHead className="w-[180px] font-medium">Model</TableHead>
+                  <TableHead className="w-[180px] font-medium">{t('requests.model')}</TableHead>
                   <TableHead className="w-[100px] font-medium">
-                    Project
+                    {t('requests.project')}
                   </TableHead>
                   <TableHead className="w-[100px] font-medium">
-                    Token
+                    {t('requests.token')}
                   </TableHead>
                   <TableHead className="w-[120px] font-medium">
-                    Provider
+                    {t('requests.provider')}
                   </TableHead>
                   <TableHead className="w-[100px] font-medium">
-                    Status
+                    {t('common.status')}
                   </TableHead>
-                  <TableHead className="w-[60px] font-medium">Code</TableHead>
+                  <TableHead className="w-[60px] font-medium">{t('requests.code')}</TableHead>
                   <TableHead className="w-[80px] text-right font-medium">
-                    Duration
+                    {t('requests.duration')}
                   </TableHead>
                   <TableHead className="w-[80px] text-right font-medium">
-                    Cost
+                    {t('requests.cost')}
                   </TableHead>
                   <TableHead
                     className="w-[45px] text-center font-medium"
-                    title="Attempts"
+                    title={t('requests.attempts')}
                   >
-                    Att.
+                    {t('requests.attShort')}
                   </TableHead>
                   <TableHead
                     className="w-[65px] text-right font-medium"
-                    title="Input Tokens"
+                    title={t('requests.inputTokens')}
                   >
-                    In
+                    {t('requests.inShort')}
                   </TableHead>
                   <TableHead
                     className="w-[65px] text-right font-medium"
-                    title="Output Tokens"
+                    title={t('requests.outputTokens')}
                   >
-                    Out
+                    {t('requests.outShort')}
                   </TableHead>
                   <TableHead
                     className="w-[65px] text-right font-medium"
-                    title="Cache Read"
+                    title={t('requests.cacheRead')}
                   >
-                    CacheR
+                    {t('requests.cacheRShort')}
                   </TableHead>
                   <TableHead
                     className="w-[65px] text-right font-medium"
-                    title="Cache Write"
+                    title={t('requests.cacheWrite')}
                   >
-                    CacheW
+                    {t('requests.cacheWShort')}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -218,38 +220,26 @@ export function RequestsPage() {
       <div className="h-[53px] flex items-center justify-between px-6 border-t border-border bg-surface-primary shrink-0">
         <span className="text-xs text-text-secondary">
           {total > 0 ? (
-            <>
-              Page{' '}
-              <span className="font-medium text-text-primary">
-                {pageIndex + 1}
-              </span>
-              , showing{' '}
-              <span className="font-medium text-text-primary">
-                {requests.length}
-              </span>{' '}
-              items of{' '}
-              <span className="font-medium text-text-primary">{total}</span>{' '}
-              total
-            </>
+            t('requests.pageInfo', { page: pageIndex + 1, count: requests.length, total })
           ) : (
-            'No items'
+            t('requests.noItems')
           )}
         </span>
         <div className="flex items-center gap-1">
           <Button
             onClick={goToPrevPage}
             disabled={pageIndex === 0}
-            className="p-1.5 rounded-md hover:bg-surface-hover text-text-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft size={16} />
           </Button>
           <span className="text-xs text-text-secondary min-w-[60px] text-center font-medium">
-            Page {pageIndex + 1}
+            {t('requests.page', { current: pageIndex + 1 })}
           </span>
           <Button
             onClick={goToNextPage}
             disabled={!hasMore}
-            className="p-1.5 rounded-md hover:bg-surface-hover text-text-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronRight size={16} />
           </Button>
@@ -261,42 +251,43 @@ export function RequestsPage() {
 
 // Request Status Badge Component
 function RequestStatusBadge({ status }: { status: ProxyRequestStatus }) {
+  const { t } = useTranslation()
   const getStatusConfig = () => {
     switch (status) {
       case 'PENDING':
         return {
           variant: 'default' as const,
-          label: 'Pending',
+          label: t('requests.status.pending'),
           icon: <Loader2 size={10} className="mr-1 shrink-0" />,
         }
       case 'IN_PROGRESS':
         return {
           variant: 'info' as const,
-          label: 'Streaming',
+          label: t('requests.status.streaming'),
           icon: <Loader2 size={10} className="mr-1 shrink-0 animate-spin" />,
         }
       case 'COMPLETED':
         return {
           variant: 'success' as const,
-          label: 'Completed',
+          label: t('requests.status.completed'),
           icon: <CheckCircle size={10} className="mr-1 shrink-0" />,
         }
       case 'FAILED':
         return {
           variant: 'danger' as const,
-          label: 'Failed',
+          label: t('requests.status.failed'),
           icon: <AlertTriangle size={10} className="mr-1 shrink-0" />,
         }
       case 'CANCELLED':
         return {
           variant: 'warning' as const,
-          label: 'Cancelled',
+          label: t('requests.status.cancelled'),
           icon: <Ban size={10} className="mr-1 shrink-0" />,
         }
       case 'REJECTED':
         return {
           variant: 'danger' as const,
-          label: 'Rejected',
+          label: t('requests.status.rejected'),
           icon: <Ban size={10} className="mr-1 flex-shrink-0" />,
         }
     }
@@ -318,7 +309,9 @@ function RequestStatusBadge({ status }: { status: ProxyRequestStatus }) {
 // Token Cell Component - single value with color
 function TokenCell({ count, color }: { count: number; color: string }) {
   if (count === 0) {
-    return <span className="text-caption text-text-muted font-mono">-</span>
+    return (
+      <span className="text-caption text-muted-foreground font-mono">-</span>
+    )
   }
 
   const formatTokens = (n: number) => {
@@ -341,7 +334,9 @@ function microToUSD(microUSD: number): number {
 // Cost Cell Component (接收 microUSD)
 function CostCell({ cost }: { cost: number }) {
   if (cost === 0) {
-    return <span className="text-caption text-text-muted font-mono">-</span>
+    return (
+      <span className="text-caption text-muted-foreground font-mono">-</span>
+    )
   }
 
   const usd = microToUSD(cost)
@@ -356,7 +351,7 @@ function CostCell({ cost }: { cost: number }) {
   const getCostColor = (c: number) => {
     if (c >= 0.1) return 'text-rose-400 font-medium'
     if (c >= 0.01) return 'text-amber-400'
-    return 'text-text-primary'
+    return 'text-foreground'
   }
 
   return (
@@ -448,7 +443,7 @@ function LogRow({
     ? 'text-primary font-bold'
     : displayDuration && displayDuration / 1_000_000 > 5000
       ? 'text-amber-400'
-      : 'text-text-secondary'
+      : 'text-muted-foreground'
 
   // Get HTTP status code (use denormalized field for list performance)
   const statusCode = request.statusCode || request.responseInfo?.status
@@ -459,7 +454,7 @@ function LogRow({
       className={cn(
         'cursor-pointer group border-none transition-none',
         // Base hover
-        !isRecent && 'hover:bg-surface-hover/50',
+        !isRecent && 'hover:bg-accent/50',
 
         // Failed state - Red left border (via shadow) and subtle red bg
         isFailed &&
@@ -475,17 +470,17 @@ function LogRow({
       )}
     >
       {/* Time */}
-      <TableCell className="py-1 font-mono text-sm text-text-primary font-medium whitespace-nowrap">
+      <TableCell className="py-1 font-mono text-sm text-foreground font-medium whitespace-nowrap">
         {formatTime(request.startTime || request.createdAt)}
       </TableCell>
 
       {/* Client */}
       <TableCell className="py-1">
         <div className="flex items-center gap-2">
-          <div className="p-1 rounded bg-surface-secondary text-text-secondary">
+          <div className="p-1 rounded bg-muted text-text-secondary">
             <ClientIcon type={request.clientType} size={16} />
           </div>
-          <span className="text-sm text-text-primary capitalize font-medium truncate max-w-[100px]">
+          <span className="text-sm text-foreground capitalize font-medium truncate max-w-[100px]">
             {request.clientType}
           </span>
         </div>
@@ -495,14 +490,14 @@ function LogRow({
       <TableCell className="py-1">
         <div className="flex flex-col max-w-[200px]">
           <span
-            className="text-sm text-text-primary truncate font-medium"
+            className="text-sm text-foreground truncate font-medium"
             title={request.requestModel}
           >
             {request.requestModel || '-'}
           </span>
           {request.responseModel &&
             request.responseModel !== request.requestModel && (
-              <span className="text-[10px] text-text-muted truncate flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
                 <span className="opacity-50">→</span> {request.responseModel}
               </span>
             )}
@@ -512,7 +507,7 @@ function LogRow({
       {/* Project */}
       <TableCell className="py-1">
         <span
-          className="text-sm text-text-secondary truncate max-w-[100px] block"
+          className="text-sm text-muted-foreground truncate max-w-[100px] block"
           title={projectName}
         >
           {projectName || '-'}
@@ -522,7 +517,7 @@ function LogRow({
       {/* Token */}
       <TableCell className="py-1">
         <span
-          className="text-sm text-text-secondary truncate max-w-[100px] block"
+          className="text-sm text-muted-foreground truncate max-w-[100px] block"
           title={tokenName}
         >
           {tokenName || '-'}
@@ -532,7 +527,7 @@ function LogRow({
       {/* Provider */}
       <TableCell className="py-1">
         <span
-          className="text-sm text-text-secondary truncate max-w-[120px] block"
+          className="text-sm text-muted-foreground truncate max-w-[120px] block"
           title={providerName}
         >
           {providerName || '-'}
@@ -553,7 +548,7 @@ function LogRow({
               ? 'bg-red-400/10 text-red-400'
               : statusCode && statusCode >= 200 && statusCode < 300
                 ? 'bg-blue-400/10 text-blue-400'
-                : 'bg-surface-secondary text-text-muted'
+                : 'bg-muted text-muted-foreground'
           )}
         >
           {statusCode && statusCode > 0 ? statusCode : '-'}
@@ -579,9 +574,9 @@ function LogRow({
             {request.proxyUpstreamAttemptCount}
           </span>
         ) : request.proxyUpstreamAttemptCount === 1 ? (
-          <span className="text-sm text-text-muted">1</span>
+          <span className="text-sm text-muted-foreground">1</span>
         ) : (
-          <span className="text-sm text-text-muted opacity-30">-</span>
+          <span className="text-sm text-muted-foreground opacity-30">-</span>
         )}
       </TableCell>
 

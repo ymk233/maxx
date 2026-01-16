@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { ChevronDown, Search, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -129,11 +130,13 @@ function matchScore(model: Model, pattern: string): number {
 export function ModelInput({
   value,
   onChange,
-  placeholder = 'Select or enter model...',
+  placeholder,
   disabled = false,
   className,
   providers,
 }: ModelInputProps) {
+  const { t } = useTranslation()
+  const actualPlaceholder = placeholder ?? t('modelInput.selectOrEnter')
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [focusedIndex, setFocusedIndex] = useState(-1)
@@ -248,7 +251,7 @@ export function ModelInput({
         disabled={disabled}
         className={cn(
           'w-full flex items-center justify-between gap-2 px-3 py-2',
-          'bg-surface-primary border border-border rounded-md',
+          'bg-card border border-border rounded-md',
           'text-sm text-left',
           'hover:border-border-hover focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary',
           'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -259,10 +262,10 @@ export function ModelInput({
         <span
           className={cn(
             'flex-1 truncate',
-            value ? 'text-text-primary' : 'text-text-muted'
+            value ? 'text-foreground' : 'text-muted-foreground'
           )}
         >
-          {value || placeholder}
+          {value || actualPlaceholder}
         </span>
         <div className="flex items-center gap-1">
           {value && !disabled && (
@@ -274,12 +277,12 @@ export function ModelInput({
                 e.key === 'Enter' &&
                 handleClear(e as unknown as React.MouseEvent)
               }
-              className="p-0.5 hover:bg-surface-hover rounded text-text-secondary hover:text-text-primary"
+              className="p-0.5 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
             >
               <X size={14} />
             </span>
           )}
-          <ChevronDown size={16} className="text-text-secondary" />
+          <ChevronDown size={16} className="text-muted-foreground" />
         </div>
       </button>
 
@@ -287,21 +290,21 @@ export function ModelInput({
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Select Model</DialogTitle>
+            <DialogTitle>{t('modelInput.selectModel')}</DialogTitle>
           </DialogHeader>
 
           {/* 搜索框 */}
           <div className="relative">
             <Search
               size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
             <Input
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search or enter custom model..."
+              placeholder={t('modelInput.searchOrEnter')}
               className="pl-9"
               autoFocus
             />
@@ -313,7 +316,7 @@ export function ModelInput({
               <div className="space-y-4">
                 {Object.entries(groupedModels).map(([provider, models]) => (
                   <div key={provider}>
-                    <div className="text-xs font-semibold text-text-secondary mb-2 sticky top-0 bg-surface-primary py-1">
+                    <div className="text-xs font-semibold text-muted-foreground mb-2 sticky top-0 bg-card py-1">
                       {provider}
                     </div>
                     <div className="space-y-1">
@@ -328,16 +331,16 @@ export function ModelInput({
                             onClick={() => handleSelect(model.id)}
                             className={cn(
                               'w-full px-3 py-2 text-left text-sm rounded-md',
-                              'hover:bg-surface-hover transition-colors',
+                              'hover:bg-accent transition-colors',
                               'flex flex-col gap-0.5',
                               value === model.id && 'bg-primary/10 ring-1 ring-primary/20',
-                              isFocused && 'bg-surface-hover ring-1 ring-primary/40'
+                              isFocused && 'bg-accent ring-1 ring-primary/40'
                             )}
                           >
-                            <span className="text-text-primary font-medium">
+                            <span className="text-foreground font-medium">
                               {model.name}
                             </span>
-                            <span className="text-xs text-text-muted font-mono">
+                            <span className="text-xs text-muted-foreground font-mono">
                               {model.id}
                             </span>
                           </button>
@@ -350,33 +353,33 @@ export function ModelInput({
             ) : search.trim() ? (
               <div className="py-4">
                 <p className="text-sm text-text-secondary mb-3">
-                  No matching models found.
+                  {t('modelInput.noMatchingModels')}
                 </p>
                 <button
                   type="button"
                   onClick={() => handleSelect(search.trim())}
-                  className="w-full px-3 py-2 text-left text-sm bg-surface-secondary rounded-md hover:bg-surface-hover transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm bg-muted rounded-md hover:bg-accent transition-colors"
                 >
                   <span className="text-text-primary">
-                    Use custom:{' '}
+                    {t('modelInput.useCustom')}
                     <span className="font-mono font-medium">{search.trim()}</span>
                   </span>
                 </button>
               </div>
             ) : (
               <div className="h-full flex items-center justify-center text-sm text-text-muted">
-                No models available
+                {t('modelInput.noModelsAvailable')}
               </div>
             )}
           </div>
 
           {/* 提示 */}
           <div className="text-xs text-text-muted pt-2 border-t border-border">
-            Press{' '}
+            {t('modelInput.pressToUse', { key: 'Enter' })}
             <kbd className="px-1.5 py-0.5 bg-surface-secondary rounded text-text-secondary font-mono">
               Enter
-            </kbd>{' '}
-            to use custom model name
+            </kbd>
+            {t('modelInput.toUseCustomModel')}
           </div>
         </DialogContent>
       </Dialog>

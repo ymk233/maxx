@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Snowflake,
   Clock,
@@ -21,7 +22,6 @@ import {
 } from 'lucide-react'
 import type {
   Cooldown,
-  CooldownReason,
   ProviderStats,
   ClientType,
 } from '@/lib/transport/types'
@@ -47,65 +47,56 @@ interface ProviderDetailsDialogProps {
   isClearingCooldown?: boolean
 }
 
-// Reason 中文说明和图标
-const REASON_INFO: Record<
-  CooldownReason,
-  {
-    label: string
-    description: string
-    icon: typeof Server
-    color: string
-    bgColor: string
-  }
-> = {
+// Reason 信息和图标 - 使用翻译
+const getReasonInfo = (t: (key: string) => string) => ({
   server_error: {
-    label: '服务器错误',
-    description: '上游服务器返回 5xx 错误，系统自动进入冷却保护',
+    label: t('provider.reasons.serverError'),
+    description: t('provider.reasons.serverErrorDesc', '上游服务器返回 5xx 错误，系统自动进入冷却保护'),
     icon: Server,
     color: 'text-rose-500 dark:text-rose-400',
     bgColor:
       'bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30 dark:border-rose-500/25',
   },
   network_error: {
-    label: '网络错误',
-    description: '无法连接到上游服务器，可能是网络故障或服务器宕机',
+    label: t('provider.reasons.networkError'),
+    description: t('provider.reasons.networkErrorDesc', '无法连接到上游服务器，可能是网络故障或服务器宕机'),
     icon: Wifi,
     color: 'text-amber-600 dark:text-amber-400',
     bgColor:
       'bg-amber-500/10 dark:bg-amber-500/15 border-amber-500/30 dark:border-amber-500/25',
   },
   quota_exhausted: {
-    label: '配额耗尽',
-    description: 'API 配额已用完，等待配额重置',
+    label: t('provider.reasons.quotaExhausted'),
+    description: t('provider.reasons.quotaExhaustedDesc', 'API 配额已用完，等待配额重置'),
     icon: AlertCircle,
     color: 'text-rose-500 dark:text-rose-400',
     bgColor:
       'bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30 dark:border-rose-500/25',
   },
   rate_limit_exceeded: {
-    label: '速率限制',
-    description: '请求速率超过限制，触发了速率保护',
+    label: t('provider.reasons.rateLimitExceeded'),
+    description: t('provider.reasons.rateLimitExceededDesc', '请求速率超过限制，触发了速率保护'),
     icon: Zap,
     color: 'text-yellow-600 dark:text-yellow-400',
     bgColor:
       'bg-yellow-500/10 dark:bg-yellow-500/15 border-yellow-500/30 dark:border-yellow-500/25',
   },
   concurrent_limit: {
-    label: '并发限制',
-    description: '并发请求数超过限制',
+    label: t('provider.reasons.concurrentLimit'),
+    description: t('provider.reasons.concurrentLimitDesc', '并发请求数超过限制'),
     icon: Ban,
     color: 'text-orange-600 dark:text-orange-400',
     bgColor:
       'bg-orange-500/10 dark:bg-orange-500/15 border-orange-500/30 dark:border-orange-500/25',
   },
   unknown: {
-    label: '未知原因',
-    description: '因未知原因进入冷却状态',
+    label: t('provider.reasons.unknown'),
+    description: t('provider.reasons.unknownDesc', '因未知原因进入冷却状态'),
     icon: HelpCircle,
-    color: 'text-text-muted',
-    bgColor: 'bg-surface-secondary/50 border-border',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50 border-border',
   },
-}
+})
 
 // 格式化 Token 数量
 function formatTokens(count: number): string {
@@ -152,6 +143,8 @@ export function ProviderDetailsDialog({
   onClearCooldown,
   isClearingCooldown,
 }: ProviderDetailsDialogProps) {
+  const { t, i18n } = useTranslation()
+  const REASON_INFO = getReasonInfo(t)
   const { formatRemaining } = useCooldowns()
 
   // 计算初始倒计时值
@@ -180,7 +173,7 @@ export function ProviderDetailsDialog({
 
   const formatUntilTime = (until: string) => {
     const date = new Date(until)
-    return date.toLocaleString('zh-CN', {
+    return date.toLocaleString(i18n.resolvedLanguage ?? i18n.language, {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -194,7 +187,7 @@ export function ProviderDetailsDialog({
     provider.config?.custom?.clientBaseURL?.[clientType] ||
     provider.config?.custom?.baseURL ||
     provider.config?.antigravity?.endpoint ||
-    'Default endpoint'
+    t('provider.defaultEndpoint')
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -218,10 +211,10 @@ export function ProviderDetailsDialog({
                   'text-xs font-bold',
                   enabled
                     ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-text-muted'
+                    : 'text-muted-foreground'
                 )}
               >
-                {enabled ? 'ON' : 'OFF'}
+                {enabled ? t('provider.status.on') : t('provider.status.off')}
               </span>
               <Switch
                 checked={enabled}
@@ -247,7 +240,7 @@ export function ProviderDetailsDialog({
                 'relative w-14 h-14 lg:w-16 lg:h-16 rounded-2xl flex items-center justify-center border shadow-lg',
                 isInCooldown
                   ? 'bg-cyan-500/10 dark:bg-cyan-950/40 border-cyan-500/40 dark:border-cyan-500/30'
-                  : 'bg-surface-secondary border-border'
+                  : 'bg-muted border-border'
               )}
               style={!isInCooldown ? { color } : {}}
             >
@@ -271,7 +264,7 @@ export function ProviderDetailsDialog({
 
             {/* Provider Info */}
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg lg:text-xl font-bold text-text-primary truncate mb-1">
+              <h2 className="text-lg lg:text-xl font-bold text-foreground truncate mb-1">
                 {provider.name}
               </h2>
               <div className="flex flex-wrap items-center gap-2">
@@ -284,7 +277,7 @@ export function ProviderDetailsDialog({
                     <Activity size={10} /> CONVERTED
                   </span>
                 )}
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-surface-hover text-text-secondary">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-accent text-muted-foreground">
                   {provider.type}
                 </span>
                 {streamingCount > 0 && (
@@ -304,12 +297,12 @@ export function ProviderDetailsDialog({
               {/* Provider Basic Info Card */}
               <div className="rounded-xl border border-border bg-muted-background p-4 space-y-3">
                 <div className="flex items-start gap-2">
-                  <Info size={14} className="text-text-muted mt-0.5 shrink-0" />
+                  <Info size={14} className="text-muted-foreground mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
                       Endpoint
                     </div>
-                    <div className="text-xs text-text-secondary font-mono break-all">
+                    <div className="text-xs text-muted-foreground font-mono break-all">
                       {endpoint}
                     </div>
                   </div>
@@ -317,19 +310,19 @@ export function ProviderDetailsDialog({
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
                       Client Type
                     </div>
-                    <div className="text-xs text-text-primary font-semibold">
+                    <div className="text-xs text-foreground font-semibold">
                       {clientType}
                     </div>
                   </div>
                   {route && (
                     <div>
-                      <div className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-1">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
                         Priority
                       </div>
-                      <div className="text-xs text-text-primary font-semibold">
+                      <div className="text-xs text-foreground font-semibold">
                         #{route.position + 1}
                       </div>
                     </div>
@@ -351,12 +344,12 @@ export function ProviderDetailsDialog({
                       {isClearingCooldown ? (
                         <>
                           <div className="h-4 w-4 animate-spin rounded-full border-2 border-teal-400/30 border-t-teal-400" />
-                          <span className="text-sm font-bold ">Thawing...</span>
+                          <span className="text-sm font-bold ">{t('provider.thawing')}</span>
                         </>
                       ) : (
                         <>
                           <Zap size={16} />
-                          立即解冻
+                          {t('provider.forceThaw')}
                         </>
                       )}
                     </div>
@@ -370,15 +363,15 @@ export function ProviderDetailsDialog({
                     className="w-full flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 dark:border-rose-500/25 bg-rose-500/5 dark:bg-rose-500/10 hover:bg-rose-500/10 dark:hover:bg-rose-500/15 px-4 py-2.5 text-sm font-medium text-rose-600 dark:text-rose-400 transition-colors"
                   >
                     <Trash2 size={14} />
-                    删除此路由
+                    {t('provider.deleteRoute')}
                   </Button>
                 )}
 
                 {/* Warning Note */}
                 {isInCooldown && (
-                  <div className="flex items-start gap-2 rounded-lg bg-surface-secondary/50 p-2.5 text-[11px] text-text-muted">
+                  <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-2.5 text-[11px] text-muted-foreground">
                     <Activity size={12} className="mt-0.5 shrink-0" />
-                    <p>强制解冻可能导致请求因根本原因未解决而再次失败。</p>
+                    <p>{t('provider.forceThawWarning')}</p>
                   </div>
                 )}
               </div>
@@ -391,7 +384,7 @@ export function ProviderDetailsDialog({
                 <div className="rounded-xl border p-4 space-y-3">
                   <div className="flex items-center gap-2 text-teal-600 dark:text-teal-400">
                     <Snowflake size={16} className="animate-spin-slow" />
-                    <span className="text-sm font-bold">冷却保护激活</span>
+                    <span className="text-sm font-bold">{t('provider.cooldownActive')}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -417,7 +410,7 @@ export function ProviderDetailsDialog({
                             {REASON_INFO[cooldown.reason]?.label ||
                               REASON_INFO.unknown.label}
                           </h3>
-                          <p className="text-xs text-text-secondary leading-relaxed">
+                          <p className="text-xs text-muted-foreground leading-relaxed">
                             {REASON_INFO[cooldown.reason]?.description ||
                               REASON_INFO.unknown.description}
                           </p>
@@ -453,7 +446,7 @@ export function ProviderDetailsDialog({
 
               {/* Statistics Section */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-text-secondary">
+                <div className="flex items-center gap-2 text-muted-foreground">
                   <TrendingUp size={14} />
                   <span className="text-xs font-bold uppercase tracking-wider">
                     Statistics

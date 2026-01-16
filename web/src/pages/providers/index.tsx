@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from 'react'
 import { Plus, Layers, Download, Upload } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useProviders, useAllProviderStats } from '@/hooks/queries'
 import { useStreamingRequests } from '@/hooks/use-streaming'
 import type { Provider, ImportResult } from '@/lib/transport'
@@ -13,6 +14,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { PROVIDER_TYPE_CONFIGS, type ProviderTypeKey } from './types'
 
 export function ProvidersPage() {
+  const { t } = useTranslation()
   const { data: providers, isLoading } = useProviders()
   const { data: providerStats = {} } = useAllProviderStats()
   const { countsByProvider } = useStreamingRequests()
@@ -115,8 +117,8 @@ export function ProvidersPage() {
       <PageHeader
         icon={Layers}
         iconClassName="text-blue-500"
-        title="Providers"
-        description={`${providers?.length || 0} configured`}
+        title={t('providers.title')}
+        description={t('providers.description', { count: providers?.length || 0 })}
       >
         <input
           type="file"
@@ -128,25 +130,25 @@ export function ProvidersPage() {
         <Button
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center gap-2"
-          title="Import Providers"
+          title={t('providers.importProviders')}
           variant={'outline'}
         >
           <Upload size={14} />
-          <span>Import</span>
+          <span>{t('common.import')}</span>
         </Button>
         <Button
           onClick={handleExport}
           className="flex items-center gap-2"
           disabled={!providers?.length}
-          title="Export Providers"
+          title={t('providers.exportProviders')}
           variant={'outline'}
         >
           <Download size={14} />
-          <span>Export</span>
+          <span>{t('common.export')}</span>
         </Button>
         <Button onClick={() => setShowCreateFlow(true)}>
           <Plus size={14} />
-          <span>Add Provider</span>
+          <span>{t('providers.addProvider')}</span>
         </Button>
       </PageHeader>
 
@@ -154,56 +156,60 @@ export function ProvidersPage() {
         <div className="mx-auto max-w-7xl">
           {isLoading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-text-muted">Loading...</div>
+              <div className="text-text-muted">{t('common.loading')}</div>
             </div>
           ) : providers?.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-text-muted">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <Layers size={48} className="mb-4 opacity-50" />
-              <p className="text-body">No providers configured</p>
+              <p className="text-body">{t('providers.noProviders')}</p>
               <p className="text-caption mt-2">
-                Click "Add Provider" to create one
+                {t('providers.noProvidersHint')}
               </p>
               <Button
                 onClick={() => setShowCreateFlow(true)}
                 className=" mt-6 flex items-center gap-2"
               >
                 <Plus size={14} />
-                <span>Add Provider</span>
+                <span>{t('providers.addProvider')}</span>
               </Button>
             </div>
           ) : (
             <div className="space-y-8">
               {/* 动态渲染各类型分组 */}
-              {(Object.keys(PROVIDER_TYPE_CONFIGS) as ProviderTypeKey[]).map(typeKey => {
-                const typeProviders = groupedProviders[typeKey]
-                if (typeProviders.length === 0) return null
+              {(Object.keys(PROVIDER_TYPE_CONFIGS) as ProviderTypeKey[]).map(
+                typeKey => {
+                  const typeProviders = groupedProviders[typeKey]
+                  if (typeProviders.length === 0) return null
 
-                const config = PROVIDER_TYPE_CONFIGS[typeKey]
-                const TypeIcon = config.icon
+                  const config = PROVIDER_TYPE_CONFIGS[typeKey]
+                  const TypeIcon = config.icon
 
-                return (
-                  <section key={typeKey} className="space-y-3">
-                    <div className="flex items-center gap-2 px-1">
-                      <TypeIcon size={16} style={{ color: config.color }} />
-                      <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider">
-                        {config.label}
-                      </h3>
-                      <div className="h-px flex-1 bg-border/50 ml-2" />
-                    </div>
-                    <div className="space-y-3">
-                      {typeProviders.map(provider => (
-                        <ProviderRow
-                          key={provider.id}
-                          provider={provider}
-                          stats={providerStats[provider.id]}
-                          streamingCount={countsByProvider.get(provider.id) || 0}
-                          onClick={() => setEditingProvider(provider)}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )
-              })}
+                  return (
+                    <section key={typeKey} className="space-y-3">
+                      <div className="flex items-center gap-2 px-1">
+                        <TypeIcon size={16} style={{ color: config.color }} />
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                          {config.label}
+                        </h3>
+                        <div className="h-px flex-1 bg-border/50 ml-2" />
+                      </div>
+                      <div className="space-y-3">
+                        {typeProviders.map(provider => (
+                          <ProviderRow
+                            key={provider.id}
+                            provider={provider}
+                            stats={providerStats[provider.id]}
+                            streamingCount={
+                              countsByProvider.get(provider.id) || 0
+                            }
+                            onClick={() => setEditingProvider(provider)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )
+                }
+              )}
             </div>
           )}
         </div>
@@ -211,11 +217,10 @@ export function ProvidersPage() {
 
       {/* Import Status Toast */}
       {importStatus && (
-        <div className="fixed bottom-6 right-6 bg-surface-primary border border-border rounded-lg shadow-lg p-4">
+        <div className="fixed bottom-6 right-6 bg-card border border-border rounded-lg shadow-lg p-4">
           <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              Import completed: {importStatus.imported} imported,{' '}
-              {importStatus.skipped} skipped
+              {t('providers.importCompleted', { imported: importStatus.imported, skipped: importStatus.skipped })}
             </div>
             {importStatus.errors.length > 0 && (
               <div className="text-xs text-red-400 space-y-1">
