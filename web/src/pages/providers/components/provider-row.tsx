@@ -15,6 +15,7 @@ import type {
 import { getProviderTypeConfig } from '../types'
 import { cn } from '@/lib/utils'
 import { useAntigravityQuota, useKiroQuota } from '@/hooks/queries'
+import { useTranslation } from 'react-i18next'
 
 // 格式化 Token 数量
 function formatTokens(count: number): string {
@@ -60,13 +61,13 @@ function getClaudeQuotaInfo(
 }
 
 // 格式化重置时间
-function formatResetTime(resetTime: string): string {
+function formatResetTime(resetTime: string, t: (key: string) => string): string {
   try {
     const reset = new Date(resetTime)
     const now = new Date()
     const diff = reset.getTime() - now.getTime()
-
-    if (diff <= 0) return 'Soon'
+    
+    if (diff <= 0) return t('proxy.comingSoon')
 
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
@@ -85,8 +86,8 @@ function formatResetTime(resetTime: string): string {
 }
 
 // 格式化 Kiro 重置天数
-function formatKiroResetDays(days: number): string {
-  if (days <= 0) return 'Soon'
+function formatKiroResetDays(days: number, t: (key: string) => string): string {
+  if (days <= 0) return t('proxy.comingSoon')
   if (days === 1) return '1d'
   return `${days}d`
 }
@@ -114,6 +115,7 @@ export function ProviderRow({
   streamingCount,
   onClick,
 }: ProviderRowProps) {
+  const { t } = useTranslation()
   // 使用通用配置系统
   const typeConfig = getProviderTypeConfig(provider.type)
   const color = typeConfig.color
@@ -231,8 +233,8 @@ export function ProviderRow({
               Claude
             </span>
             {claudeInfo && (
-              <span className="text-[9px] font-mono text-muted-foreground/60">
-                {formatResetTime(claudeInfo.resetTime)}
+              <span className="text-[9px] font-mono text-text-muted/60">
+                {formatResetTime(claudeInfo.resetTime, t)}
               </span>
             )}
           </div>
@@ -267,8 +269,8 @@ export function ProviderRow({
               Quota
             </span>
             {kiroInfo && !kiroInfo.isBanned && (
-              <span className="text-[9px] font-mono text-muted-foreground/60">
-                {formatKiroResetDays(kiroInfo.resetDays)}
+              <span className="text-[9px] font-mono text-text-muted/60">
+                {formatKiroResetDays(kiroInfo.resetDays, t)}
               </span>
             )}
           </div>

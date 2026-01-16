@@ -40,6 +40,7 @@ import type {
   APIToken,
   APITokenCreateResult,
   CreateAPITokenData,
+  RoutePositionUpdate,
 } from './types';
 
 export class HttpTransport implements Transport {
@@ -167,6 +168,10 @@ export class HttpTransport implements Transport {
 
   async deleteRoute(id: number): Promise<void> {
     await this.client.delete(`/routes/${id}`);
+  }
+
+  async batchUpdateRoutePositions(updates: RoutePositionUpdate[]): Promise<void> {
+    await this.client.put('/routes/batch-positions', updates);
   }
 
   // ===== Session API =====
