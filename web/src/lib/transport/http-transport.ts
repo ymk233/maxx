@@ -30,7 +30,8 @@ import type {
   AntigravityTokenValidationResult,
   AntigravityBatchValidationResult,
   AntigravityQuotaData,
-  AntigravityGlobalSettings,
+  ModelMapping,
+  ModelMappingInput,
   ImportResult,
   Cooldown,
   KiroTokenValidationResult,
@@ -41,6 +42,8 @@ import type {
   APITokenCreateResult,
   CreateAPITokenData,
   RoutePositionUpdate,
+  UsageStats,
+  UsageStatsFilter,
 } from './types';
 
 export class HttpTransport implements Transport {
@@ -359,19 +362,33 @@ export class HttpTransport implements Transport {
     return data;
   }
 
-  async getAntigravityGlobalSettings(): Promise<AntigravityGlobalSettings> {
-    const { data } = await this.client.get<AntigravityGlobalSettings>('/antigravity-settings');
+  // ===== Model Mapping API =====
+
+  async getModelMappings(): Promise<ModelMapping[]> {
+    const { data } = await this.client.get<ModelMapping[]>('/model-mappings');
+    return data ?? [];
+  }
+
+  async createModelMapping(input: ModelMappingInput): Promise<ModelMapping> {
+    const { data } = await this.client.post<ModelMapping>('/model-mappings', input);
     return data;
   }
 
-  async updateAntigravityGlobalSettings(settings: AntigravityGlobalSettings): Promise<AntigravityGlobalSettings> {
-    const { data } = await this.client.put<AntigravityGlobalSettings>('/antigravity-settings', settings);
+  async updateModelMapping(id: number, input: ModelMappingInput): Promise<ModelMapping> {
+    const { data } = await this.client.put<ModelMapping>(`/model-mappings/${id}`, input);
     return data;
   }
 
-  async resetAntigravityGlobalSettings(): Promise<AntigravityGlobalSettings> {
-    const { data } = await this.client.post<AntigravityGlobalSettings>('/antigravity-settings-reset');
-    return data;
+  async deleteModelMapping(id: number): Promise<void> {
+    await this.client.delete(`/model-mappings/${id}`);
+  }
+
+  async clearAllModelMappings(): Promise<void> {
+    await this.client.delete('/model-mappings/clear-all');
+  }
+
+  async resetModelMappingsToDefaults(): Promise<void> {
+    await this.client.post('/model-mappings/reset-defaults');
   }
 
   // ===== Kiro API =====
@@ -449,6 +466,24 @@ export class HttpTransport implements Transport {
 
   async deleteAPIToken(id: number): Promise<void> {
     await this.client.delete(`/api-tokens/${id}`);
+  }
+
+  // ===== Usage Stats API =====
+
+  async getUsageStats(filter?: UsageStatsFilter): Promise<UsageStats[]> {
+    const params = new URLSearchParams();
+    if (filter?.start) params.set('start', filter.start);
+    if (filter?.end) params.set('end', filter.end);
+    if (filter?.routeId) params.set('routeId', String(filter.routeId));
+    if (filter?.providerId) params.set('providerId', String(filter.providerId));
+    if (filter?.projectId) params.set('projectId', String(filter.projectId));
+    if (filter?.clientType) params.set('clientType', filter.clientType);
+    if (filter?.apiTokenID) params.set('apiTokenId', String(filter.apiTokenID));
+
+    const query = params.toString();
+    const url = query ? `/usage-stats?${query}` : '/usage-stats';
+    const { data } = await this.client.get<UsageStats[]>(url);
+    return data ?? [];
   }
 
   // ===== WebSocket 订阅 =====

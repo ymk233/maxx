@@ -284,6 +284,8 @@ export interface ProxyStatus {
   running: boolean;
   address: string;
   port: number;
+  version: string;
+  commit: string;
 }
 
 // ===== Provider Stats =====
@@ -347,16 +349,38 @@ export interface AntigravityOAuthResult {
   error?: string;
 }
 
-// Antigravity 模型映射规则
-export interface ModelMappingRule {
-  pattern: string; // 源模式，支持 * 通配符
-  target: string;  // 目标模型名
+// ===== 模型映射 =====
+
+// 模型映射规则
+export interface ModelMapping {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  clientType: string;    // 客户端类型，空表示所有
+  providerType: string;  // 供应商类型（如 antigravity, kiro, custom），空表示所有
+  providerID: number;    // 供应商 ID，0 表示所有
+  projectID: number;     // 项目 ID，0 表示所有
+  routeID: number;       // 路由 ID，0 表示所有
+  apiTokenID: number;    // Token ID，0 表示所有
+  pattern: string;       // 源模式，支持 * 通配符
+  target: string;        // 目标模型名
+  priority: number;      // 优先级，数字越小优先级越高
+  isEnabled: boolean;    // 是否启用
+  isBuiltin: boolean;    // 是否为内置规则
 }
 
-// Antigravity 全局设置
-export interface AntigravityGlobalSettings {
-  modelMappingRules: ModelMappingRule[];
-  availableTargetModels?: string[]; // 只在响应中返回，更新时不需要
+// 创建/更新模型映射的请求
+export interface ModelMappingInput {
+  clientType?: string;
+  providerType?: string;
+  providerID?: number;
+  projectID?: number;
+  routeID?: number;
+  apiTokenID?: number;
+  pattern: string;
+  target: string;
+  priority?: number;
+  isEnabled?: boolean;
 }
 
 // ===== Kiro 类型 =====
@@ -466,4 +490,35 @@ export interface CreateAPITokenData {
   description?: string;
   projectID?: number;
   expiresAt?: string;
+}
+
+// ===== Usage Stats =====
+
+export interface UsageStats {
+  id: number;
+  createdAt: string;
+  hour: string;
+  routeID: number;
+  providerID: number;
+  projectID: number;
+  apiTokenID: number;
+  clientType: string;
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+}
+
+export interface UsageStatsFilter {
+  start?: string;
+  end?: string;
+  routeId?: number;
+  providerId?: number;
+  projectId?: number;
+  apiTokenID?: number;
+  clientType?: string;
 }

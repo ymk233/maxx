@@ -9,6 +9,7 @@ import (
 
 	"github.com/awsl-project/maxx/internal/cooldown"
 	"github.com/awsl-project/maxx/internal/domain"
+	"github.com/awsl-project/maxx/internal/repository"
 	"github.com/awsl-project/maxx/internal/service"
 )
 
@@ -73,12 +74,12 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCooldowns(w, r, id)
 	case "logs":
 		h.handleLogs(w, r)
-	case "antigravity-settings":
-		h.handleAntigravitySettings(w, r)
-	case "antigravity-settings-reset":
-		h.handleAntigravitySettingsReset(w, r)
 	case "api-tokens":
 		h.handleAPITokens(w, r, id)
+	case "model-mappings":
+		h.handleModelMappings(w, r, id)
+	case "usage-stats":
+		h.handleUsageStats(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -792,7 +793,7 @@ func (h *AdminHandler) handleProxyStatus(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.GetProxyStatus())
+	writeJSON(w, http.StatusOK, h.svc.GetProxyStatus(r))
 }
 
 // Provider stats handler
@@ -884,51 +885,6 @@ func (h *AdminHandler) handleCooldowns(w http.ResponseWriter, r *http.Request, p
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
-}
-
-// Antigravity global settings handler
-// GET /admin/antigravity-settings - get global Antigravity settings
-// PUT /admin/antigravity-settings - update global Antigravity settings
-func (h *AdminHandler) handleAntigravitySettings(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		settings, err := h.svc.GetAntigravityGlobalSettings()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, settings)
-
-	case http.MethodPut:
-		var settings service.AntigravityGlobalSettings
-		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := h.svc.UpdateAntigravityGlobalSettings(&settings); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, settings)
-
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
-// POST /admin/antigravity-settings-reset - reset to preset defaults
-func (h *AdminHandler) handleAntigravitySettingsReset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
-	settings, err := h.svc.ResetAntigravityGlobalSettings()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, settings)
 }
 
 // API Token handlers
@@ -1047,6 +1003,206 @@ func (h *AdminHandler) handleAPITokens(w http.ResponseWriter, r *http.Request, i
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// Model Mapping handlers
+func (h *AdminHandler) handleModelMappings(w http.ResponseWriter, r *http.Request, id uint64) {
+	// Check for clear-all endpoint: /admin/model-mappings/clear-all
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/clear-all") {
+		h.handleClearAllModelMappings(w, r)
+		return
+	}
+	// Check for reset-defaults endpoint: /admin/model-mappings/reset-defaults
+	if strings.HasSuffix(path, "/reset-defaults") {
+		h.handleResetModelMappingsToDefaults(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if id > 0 {
+			mapping, err := h.svc.GetModelMapping(id)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "mapping not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, mapping)
+		} else {
+			mappings, err := h.svc.GetModelMappings()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, mappings)
+		}
+	case http.MethodPost:
+		var mapping domain.ModelMapping
+		if err := json.NewDecoder(r.Body).Decode(&mapping); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if mapping.Pattern == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pattern is required"})
+			return
+		}
+		if mapping.Target == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target is required"})
+			return
+		}
+		if err := h.svc.CreateModelMapping(&mapping); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, mapping)
+	case http.MethodPut:
+		if id == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		existing, err := h.svc.GetModelMapping(id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "mapping not found"})
+			return
+		}
+		var body struct {
+			ClientType *string `json:"clientType"`
+			Pattern    *string `json:"pattern"`
+			Target     *string `json:"target"`
+			Priority   *int    `json:"priority"`
+			IsEnabled  *bool   `json:"isEnabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if body.ClientType != nil {
+			existing.ClientType = domain.ClientType(*body.ClientType)
+		}
+		if body.Pattern != nil {
+			if *body.Pattern == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pattern cannot be empty"})
+				return
+			}
+			existing.Pattern = *body.Pattern
+		}
+		if body.Target != nil {
+			if *body.Target == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target cannot be empty"})
+				return
+			}
+			existing.Target = *body.Target
+		}
+		if body.Priority != nil {
+			existing.Priority = *body.Priority
+		}
+		if body.IsEnabled != nil {
+			existing.IsEnabled = *body.IsEnabled
+		}
+		if err := h.svc.UpdateModelMapping(existing); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, existing)
+	case http.MethodDelete:
+		if id == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		if err := h.svc.DeleteModelMapping(id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusNoContent, nil)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+// handleClearAllModelMappings handles DELETE /admin/model-mappings/clear-all
+func (h *AdminHandler) handleClearAllModelMappings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	if err := h.svc.ClearAllModelMappings(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "all mappings cleared"})
+}
+
+// handleResetModelMappingsToDefaults handles POST /admin/model-mappings/reset-defaults
+func (h *AdminHandler) handleResetModelMappingsToDefaults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	if err := h.svc.ResetModelMappingsToDefaults(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "mappings reset to defaults"})
+}
+
+// Usage Stats handlers
+func (h *AdminHandler) handleUsageStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// Parse query parameters for filtering
+	query := r.URL.Query()
+	filter := repository.UsageStatsFilter{}
+
+	// Parse time range (转换到本地时区)
+	if startStr := query.Get("start"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			local := t.Local()
+			filter.StartTime = &local
+		}
+	}
+	if endStr := query.Get("end"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			local := t.Local()
+			filter.EndTime = &local
+		}
+	}
+
+	// Parse IDs
+	if routeIDStr := query.Get("routeId"); routeIDStr != "" {
+		if id, err := strconv.ParseUint(routeIDStr, 10, 64); err == nil {
+			filter.RouteID = &id
+		}
+	}
+	if providerIDStr := query.Get("providerId"); providerIDStr != "" {
+		if id, err := strconv.ParseUint(providerIDStr, 10, 64); err == nil {
+			filter.ProviderID = &id
+		}
+	}
+	if projectIDStr := query.Get("projectId"); projectIDStr != "" {
+		if id, err := strconv.ParseUint(projectIDStr, 10, 64); err == nil {
+			filter.ProjectID = &id
+		}
+	}
+	if clientType := query.Get("clientType"); clientType != "" {
+		filter.ClientType = &clientType
+	}
+	if apiTokenIDStr := query.Get("apiTokenId"); apiTokenIDStr != "" {
+		if id, err := strconv.ParseUint(apiTokenIDStr, 10, 64); err == nil {
+			filter.APITokenID = &id
+		}
+	}
+
+	stats, err := h.svc.GetUsageStats(filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

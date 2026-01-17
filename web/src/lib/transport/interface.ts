@@ -27,7 +27,8 @@ import type {
   AntigravityTokenValidationResult,
   AntigravityBatchValidationResult,
   AntigravityQuotaData,
-  AntigravityGlobalSettings,
+  ModelMapping,
+  ModelMappingInput,
   ImportResult,
   Cooldown,
   KiroTokenValidationResult,
@@ -38,6 +39,8 @@ import type {
   APITokenCreateResult,
   CreateAPITokenData,
   RoutePositionUpdate,
+  UsageStats,
+  UsageStatsFilter,
 } from './types';
 
 /**
@@ -115,9 +118,14 @@ export interface Transport {
   validateAntigravityTokenText(tokenText: string): Promise<AntigravityBatchValidationResult>;
   getAntigravityProviderQuota(providerId: number, forceRefresh?: boolean): Promise<AntigravityQuotaData>;
   startAntigravityOAuth(): Promise<{ authURL: string; state: string }>;
-  getAntigravityGlobalSettings(): Promise<AntigravityGlobalSettings>;
-  updateAntigravityGlobalSettings(settings: AntigravityGlobalSettings): Promise<AntigravityGlobalSettings>;
-  resetAntigravityGlobalSettings(): Promise<AntigravityGlobalSettings>;
+
+  // ===== Model Mapping API =====
+  getModelMappings(): Promise<ModelMapping[]>;
+  createModelMapping(data: ModelMappingInput): Promise<ModelMapping>;
+  updateModelMapping(id: number, data: ModelMappingInput): Promise<ModelMapping>;
+  deleteModelMapping(id: number): Promise<void>;
+  clearAllModelMappings(): Promise<void>;
+  resetModelMappingsToDefaults(): Promise<void>;
 
   // ===== Kiro API =====
   validateKiroSocialToken(refreshToken: string): Promise<KiroTokenValidationResult>;
@@ -139,6 +147,9 @@ export interface Transport {
   createAPIToken(data: CreateAPITokenData): Promise<APITokenCreateResult>;
   updateAPIToken(id: number, data: Partial<APIToken>): Promise<APIToken>;
   deleteAPIToken(id: number): Promise<void>;
+
+  // ===== Usage Stats API =====
+  getUsageStats(filter?: UsageStatsFilter): Promise<UsageStats[]>;
 
   // ===== 实时订阅 =====
   subscribe<T = unknown>(eventType: WSMessageType, callback: EventCallback<T>): UnsubscribeFn;

@@ -47,7 +47,9 @@ export type {
   AntigravityTokenValidationResult,
   AntigravityBatchValidationResult,
   AntigravityOAuthResult,
-  AntigravityGlobalSettings,
+  // Model Mapping
+  ModelMapping,
+  ModelMappingInput,
   // Kiro
   KiroTokenValidationResult,
   KiroQuotaData,
@@ -59,6 +61,9 @@ export type {
   APIToken,
   APITokenCreateResult,
   CreateAPITokenData,
+  // Usage Stats
+  UsageStats,
+  UsageStatsFilter,
 } from './types';
 
 export type {

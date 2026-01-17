@@ -3,16 +3,16 @@ package service
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/awsl-project/maxx/internal/adapter/provider/antigravity"
-	"github.com/awsl-project/maxx/internal/adapter/provider/kiro"
 	"github.com/awsl-project/maxx/internal/domain"
 	"github.com/awsl-project/maxx/internal/repository"
+	"github.com/awsl-project/maxx/internal/version"
 )
 
 // ProviderAdapterRefresher is an interface for refreshing provider adapters
@@ -35,6 +35,8 @@ type AdminService struct {
 	attemptRepo         repository.ProxyUpstreamAttemptRepository
 	settingRepo         repository.SystemSettingRepository
 	apiTokenRepo        repository.APITokenRepository
+	modelMappingRepo    repository.ModelMappingRepository
+	usageStatsRepo      repository.UsageStatsRepository
 	serverAddr          string
 	adapterRefresher    ProviderAdapterRefresher
 }
@@ -51,6 +53,8 @@ func NewAdminService(
 	attemptRepo repository.ProxyUpstreamAttemptRepository,
 	settingRepo repository.SystemSettingRepository,
 	apiTokenRepo repository.APITokenRepository,
+	modelMappingRepo repository.ModelMappingRepository,
+	usageStatsRepo repository.UsageStatsRepository,
 	serverAddr string,
 	adapterRefresher ProviderAdapterRefresher,
 ) *AdminService {
@@ -65,6 +69,8 @@ func NewAdminService(
 		attemptRepo:         attemptRepo,
 		settingRepo:         settingRepo,
 		apiTokenRepo:        apiTokenRepo,
+		modelMappingRepo:    modelMappingRepo,
+		usageStatsRepo:      usageStatsRepo,
 		serverAddr:          serverAddr,
 		adapterRefresher:    adapterRefresher,
 	}
@@ -388,7 +394,7 @@ func (s *AdminService) GetProxyUpstreamAttempts(proxyRequestID uint64) ([]*domai
 }
 
 func (s *AdminService) GetProviderStats(clientType string, projectID uint64) (map[uint64]*domain.ProviderStats, error) {
-	return s.attemptRepo.GetProviderStats(clientType, projectID)
+	return s.usageStatsRepo.GetProviderStats(clientType, projectID)
 }
 
 // ===== Settings API =====
@@ -417,220 +423,58 @@ func (s *AdminService) DeleteSetting(key string) error {
 	return s.settingRepo.Delete(key)
 }
 
-// ===== Antigravity Global Settings API =====
-
-// ModelMappingRule represents a single model mapping rule (for API)
-type ModelMappingRule struct {
-	Pattern string `json:"pattern"` // Source pattern, supports * wildcard
-	Target  string `json:"target"`  // Target model name
-}
-
-// AntigravityGlobalSettings represents the global Antigravity configuration
-type AntigravityGlobalSettings struct {
-	ModelMappingRules     []ModelMappingRule `json:"modelMappingRules"`
-	AvailableTargetModels []string           `json:"availableTargetModels"`
-}
-
-// GetAntigravityGlobalSettings retrieves the global Antigravity settings
-// If no custom mapping exists, returns the preset mapping as default
-func (s *AdminService) GetAntigravityGlobalSettings() (*AntigravityGlobalSettings, error) {
-	settings := &AntigravityGlobalSettings{
-		ModelMappingRules:     []ModelMappingRule{},
-		AvailableTargetModels: antigravity.GetAvailableTargetModels(),
-	}
-
-	// Get model mapping rules from database
-	rulesJSON, err := s.settingRepo.Get(domain.SettingKeyAntigravityModelMapping)
-	if err == nil && rulesJSON != "" {
-		// Use ParseModelMappingRules which handles both new array format and legacy map format
-		agRules, parseErr := antigravity.ParseModelMappingRules(rulesJSON)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		// Convert antigravity.ModelMappingRule to service.ModelMappingRule
-		settings.ModelMappingRules = make([]ModelMappingRule, len(agRules))
-		for i, r := range agRules {
-			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-		}
-	}
-
-	// If no rules exist, initialize with preset rules
-	if len(settings.ModelMappingRules) == 0 {
-		defaultRules := antigravity.GetDefaultModelMappingRules()
-		settings.ModelMappingRules = make([]ModelMappingRule, len(defaultRules))
-		for i, r := range defaultRules {
-			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-		}
-		// Save to database
-		if rulesJSON, err := json.Marshal(settings.ModelMappingRules); err == nil {
-			s.settingRepo.Set(domain.SettingKeyAntigravityModelMapping, string(rulesJSON))
-		}
-	}
-
-	return settings, nil
-}
-
-// UpdateAntigravityGlobalSettings updates the global Antigravity settings
-func (s *AdminService) UpdateAntigravityGlobalSettings(settings *AntigravityGlobalSettings) error {
-	// Update model mapping rules
-	if settings.ModelMappingRules != nil {
-		rulesJSON, err := json.Marshal(settings.ModelMappingRules)
-		if err != nil {
-			return err
-		}
-		if err := s.settingRepo.Set(domain.SettingKeyAntigravityModelMapping, string(rulesJSON)); err != nil {
-			return err
-		}
-	} else {
-		// Clear rules if nil
-		if err := s.settingRepo.Set(domain.SettingKeyAntigravityModelMapping, "[]"); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// ResetAntigravityGlobalSettings resets the model mapping to preset defaults
-func (s *AdminService) ResetAntigravityGlobalSettings() (*AntigravityGlobalSettings, error) {
-	defaultRules := antigravity.GetDefaultModelMappingRules()
-	rules := make([]ModelMappingRule, len(defaultRules))
-	for i, r := range defaultRules {
-		rules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-	}
-
-	rulesJSON, err := json.Marshal(rules)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.settingRepo.Set(domain.SettingKeyAntigravityModelMapping, string(rulesJSON)); err != nil {
-		return nil, err
-	}
-
-	return &AntigravityGlobalSettings{
-		ModelMappingRules:     rules,
-		AvailableTargetModels: antigravity.GetAvailableTargetModels(),
-	}, nil
-}
-
-// ===== Kiro Global Settings API =====
-
-// KiroGlobalSettings contains global Kiro settings
-type KiroGlobalSettings struct {
-	ModelMappingRules     []ModelMappingRule `json:"modelMappingRules"`
-	AvailableTargetModels []string           `json:"availableTargetModels"`
-}
-
-// GetKiroGlobalSettings retrieves the global Kiro settings
-// If no custom mapping exists, returns the preset mapping as default
-func (s *AdminService) GetKiroGlobalSettings() (*KiroGlobalSettings, error) {
-	settings := &KiroGlobalSettings{
-		ModelMappingRules:     []ModelMappingRule{},
-		AvailableTargetModels: kiro.AvailableTargetModels,
-	}
-
-	// Get model mapping rules from database
-	rulesJSON, err := s.settingRepo.Get(domain.SettingKeyKiroModelMapping)
-	if err == nil && rulesJSON != "" {
-		// Use ParseModelMappingRules which handles both new array format and legacy map format
-		kiroRules, parseErr := kiro.ParseModelMappingRules(rulesJSON)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		// Convert kiro.ModelMappingRule to service.ModelMappingRule
-		settings.ModelMappingRules = make([]ModelMappingRule, len(kiroRules))
-		for i, r := range kiroRules {
-			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-		}
-	}
-
-	// If no rules exist, initialize with preset rules
-	if len(settings.ModelMappingRules) == 0 {
-		defaultRules := kiro.GetDefaultModelMappingRules()
-		settings.ModelMappingRules = make([]ModelMappingRule, len(defaultRules))
-		for i, r := range defaultRules {
-			settings.ModelMappingRules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-		}
-		// Save to database
-		if rulesJSON, err := json.Marshal(settings.ModelMappingRules); err == nil {
-			s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON))
-		}
-	}
-
-	return settings, nil
-}
-
-// UpdateKiroGlobalSettings updates the global Kiro settings
-func (s *AdminService) UpdateKiroGlobalSettings(settings *KiroGlobalSettings) error {
-	// Update model mapping rules
-	if settings.ModelMappingRules != nil {
-		rulesJSON, err := json.Marshal(settings.ModelMappingRules)
-		if err != nil {
-			return err
-		}
-		if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON)); err != nil {
-			return err
-		}
-	} else {
-		// Clear rules if nil
-		if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, "[]"); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// ResetKiroGlobalSettings resets the model mapping to preset defaults
-func (s *AdminService) ResetKiroGlobalSettings() (*KiroGlobalSettings, error) {
-	defaultRules := kiro.GetDefaultModelMappingRules()
-	rules := make([]ModelMappingRule, len(defaultRules))
-	for i, r := range defaultRules {
-		rules[i] = ModelMappingRule{Pattern: r.Pattern, Target: r.Target}
-	}
-
-	rulesJSON, err := json.Marshal(rules)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.settingRepo.Set(domain.SettingKeyKiroModelMapping, string(rulesJSON)); err != nil {
-		return nil, err
-	}
-
-	return &KiroGlobalSettings{
-		ModelMappingRules:     rules,
-		AvailableTargetModels: kiro.AvailableTargetModels,
-	}, nil
-}
-
 // ===== Proxy Status API =====
 
 type ProxyStatus struct {
 	Running bool   `json:"running"`
 	Address string `json:"address"`
 	Port    int    `json:"port"`
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
 }
 
-func (s *AdminService) GetProxyStatus() *ProxyStatus {
-	addr := s.serverAddr
-	port := 9880 // default
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		if p, err := strconv.Atoi(addr[idx+1:]); err == nil {
-			port = p
+func (s *AdminService) GetProxyStatus(r *http.Request) *ProxyStatus {
+	// 获取真实的访问地址
+	// 优先使用 X-Forwarded-Host (反向代理场景)，否则使用 r.Host
+	// r.Host 已经包含了正确的 host:port 格式（标准端口不带端口号）
+	displayAddr := r.Header.Get("X-Forwarded-Host")
+	if displayAddr == "" {
+		displayAddr = r.Host
+	}
+	// X-Forwarded-Host 可能包含多个值（逗号分隔），取第一个
+	displayAddr = strings.TrimSpace(strings.Split(displayAddr, ",")[0])
+
+	// 如果获取不到，回退到 localhost 和服务器监听端口
+	if displayAddr == "" {
+		addr := s.serverAddr
+		port := 9880 // default
+		if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+			if p, err := strconv.Atoi(addr[idx+1:]); err == nil {
+				port = p
+			}
 		}
+		displayAddr = "localhost:" + strconv.Itoa(port)
 	}
 
-	displayAddr := "localhost"
-	if port != 80 {
-		displayAddr = "localhost:" + strconv.Itoa(port)
+	// 从 displayAddr 中解析端口（用于 Port 字段）
+	port := 80 // 默认 HTTP 端口
+	if _, portStr, err := net.SplitHostPort(displayAddr); err == nil {
+		// 地址包含端口
+		if p, err := strconv.Atoi(portStr); err == nil {
+			port = p
+		}
+		// displayAddr 保持 host:port 格式不变
+	} else {
+		// 地址不包含端口，说明是标准端口 80
+		// displayAddr 保持原样（不带端口）
 	}
 
 	return &ProxyStatus{
 		Running: true,
 		Address: displayAddr,
 		Port:    port,
+		Version: version.Version,
+		Commit:  version.Commit,
 	}
 }
 
@@ -742,4 +586,58 @@ func generateAPIToken() (plain string, prefix string, err error) {
 	}
 
 	return plain, prefix, nil
+}
+
+// ===== Model Mapping API =====
+
+// GetModelMappings returns all model mappings
+func (s *AdminService) GetModelMappings() ([]*domain.ModelMapping, error) {
+	return s.modelMappingRepo.List()
+}
+
+// GetModelMapping returns a model mapping by ID
+func (s *AdminService) GetModelMapping(id uint64) (*domain.ModelMapping, error) {
+	return s.modelMappingRepo.GetByID(id)
+}
+
+// CreateModelMapping creates a new model mapping
+func (s *AdminService) CreateModelMapping(mapping *domain.ModelMapping) error {
+	return s.modelMappingRepo.Create(mapping)
+}
+
+// UpdateModelMapping updates an existing model mapping
+func (s *AdminService) UpdateModelMapping(mapping *domain.ModelMapping) error {
+	return s.modelMappingRepo.Update(mapping)
+}
+
+// DeleteModelMapping deletes a model mapping by ID
+func (s *AdminService) DeleteModelMapping(id uint64) error {
+	return s.modelMappingRepo.Delete(id)
+}
+
+// ClearAllModelMappings deletes all model mappings (both builtin and non-builtin)
+func (s *AdminService) ClearAllModelMappings() error {
+	return s.modelMappingRepo.ClearAll()
+}
+
+// ResetModelMappingsToDefaults re-seeds default builtin mappings
+func (s *AdminService) ResetModelMappingsToDefaults() error {
+	return s.modelMappingRepo.SeedDefaults()
+}
+
+// GetAvailableClientTypes returns all available client types for model mapping
+func (s *AdminService) GetAvailableClientTypes() []domain.ClientType {
+	return []domain.ClientType{
+		"",                       // Empty means applies to all
+		domain.ClientTypeClaude,
+		domain.ClientTypeOpenAI,
+		domain.ClientTypeGemini,
+	}
+}
+
+// ===== Usage Stats API =====
+
+// GetUsageStats queries usage statistics with optional filters
+func (s *AdminService) GetUsageStats(filter repository.UsageStatsFilter) ([]*domain.UsageStats, error) {
+	return s.usageStatsRepo.Query(filter)
 }
